@@ -1,0 +1,17 @@
+node_modules/
+dist/
+dist-ssr/
+build/
+.vite/
+coverage/
+*.local
+*.log
+npm-debug.log*
+.DS_Store
+.idea/
+.vscode/
+android/
+ios/
+.env
+.env.*
+!.env.example

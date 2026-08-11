@@ -1,0 +1,80 @@
+{
+  "_comment": "Все игровые числа. Правь смело, перезапусти страницу. Описание — в docs/PLAN_V1.md",
+
+  "shift": {
+    "duration_sec": 360,
+    "grid_width": 9,
+    "grid_depth": 30,
+    "elevator_bank_sec": 2,
+    "checkpoint_every_rows": 5,
+    "quota_share_of_best": 0.6,
+    "quota_min": 200,
+    "quota_bonus": 0.1
+  },
+
+  "dome": {
+    "hp_base": 100,
+    "warning_hp_share": 0.3
+  },
+
+  "turret": {
+    "dps_base": 10,
+    "salvo_multiplier": 5,
+    "salvo_cooldown_sec": 20
+  },
+
+  "cargo": {
+    "capacity_base": 80
+  },
+
+  "drill": {
+    "speed_base": 1.0
+  },
+
+  "layers": [
+    { "id": "L1", "name": "Ледяной Покров", "rows": [0, 9],   "hardness_sec": 0.6, "yield": 5,  "enemies": ["aberration"] },
+    { "id": "L2", "name": "Пещеры Эха",     "rows": [10, 19], "hardness_sec": 1.2, "yield": 14, "enemies": ["aberration", "drowned"] },
+    { "id": "L3", "name": "Подлёдный Океан","rows": [20, 30], "hardness_sec": 2.0, "yield": 30, "enemies": ["aberration", "drowned", "moth"] }
+  ],
+
+  "enemies": {
+    "aberration": { "hp_mult": 1.0, "speed": 1.0, "dome_damage": 5 },
+    "drowned":    { "hp_mult": 2.5, "speed": 0.5, "dome_damage": 8 },
+    "moth":       { "hp_mult": 0.6, "speed": 1.8, "dome_damage": 4 }
+  },
+
+  "waves": {
+    "first_wave_sec": 30,
+    "interval_sec": 35,
+    "count_base": 3,
+    "count_per_wave": 1.5,
+    "hp_growth_per_wave": 1.12,
+    "hp_growth_per_layer": 0.15
+  },
+
+  "upgrades": {
+    "cost_growth": 1.15,
+    "items": {
+      "drill":  { "name": "Бур",    "effect": "+8% скорость копки",   "cost_base": 50,  "step": 0.08 },
+      "turret": { "name": "Турель", "effect": "+10% урон",            "cost_base": 60,  "step": 0.10 },
+      "dome":   { "name": "Купол",  "effect": "+15 здоровья",         "cost_base": 70,  "step": 15 },
+      "cargo":  { "name": "Карго",  "effect": "+25% ёмкость",         "cost_base": 40,  "step": 0.25 },
+      "hangar": { "name": "Ангар",  "effect": "+20% оффлайн-добыча",  "cost_base": 80,  "step": 0.20 },
+      "salvo":  { "name": "Залп",   "effect": "-1 сек откат",         "cost_base": 100, "step": -1, "max_level": 8 }
+    }
+  },
+
+  "offline": {
+    "scrap_per_hour_per_depth": 20,
+    "cap_hours": 6
+  },
+
+  "prestige": {
+    "wave_hp_mult_per_tier": 1.5,
+    "yield_mult_per_tier": 2.0
+  },
+
+  "ads": {
+    "enabled": false
+  }
+}
