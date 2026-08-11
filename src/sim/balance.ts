@@ -6,12 +6,20 @@
 /** Inclusive row range of a layer: [firstRow, lastRow]. */
 export type RowRange = readonly [number, number];
 
+/** One currency. `premium` marks what offline work never produces. */
+export interface ResourceBalance {
+  readonly name: string;
+  readonly premium: boolean;
+}
+
 export interface LayerBalance {
   readonly id: string;
   readonly name: string;
   readonly rows: RowRange;
   readonly hardness_sec: number;
   readonly yield: number;
+  /** Chance in [0, 1] that a dug cell of this layer drops one crystal. */
+  readonly crystal_chance: number;
   readonly enemies: readonly string[];
 }
 
@@ -21,6 +29,7 @@ export interface ShiftBalance {
   readonly grid_depth: number;
   readonly elevator_bank_sec: number;
   readonly checkpoint_every_rows: number;
+  readonly crystals_per_new_checkpoint: number;
   readonly quota_share_of_best: number;
   readonly quota_min: number;
   readonly quota_bonus: number;
@@ -43,6 +52,8 @@ export interface CargoBalance {
 
 export interface DrillBalance {
   readonly speed_base: number;
+  /** Travel speed of the drill, in grid cells per second. The road costs time. */
+  readonly move_rows_per_sec: number;
 }
 
 export interface EnemyBalance {
@@ -63,9 +74,13 @@ export interface WavesBalance {
 export interface UpgradeItemBalance {
   readonly name: string;
   readonly effect: string;
+  /** Key in `Balance.resources` the upgrade is paid with. */
+  readonly currency: string;
   readonly cost_base: number;
   readonly step: number;
   readonly max_level?: number;
+  /** Overrides `UpgradesBalance.cost_growth` for this item. */
+  readonly cost_growth?: number;
 }
 
 export interface UpgradesBalance {
