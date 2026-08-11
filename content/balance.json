@@ -26,7 +26,7 @@
   "turret": {
     "dps_base": 10,
     "salvo_multiplier": 5,
-    "salvo_cooldown_sec": 20
+    "salvo_cooldown_sec": 45
   },
 
   "cargo": {
@@ -53,10 +53,10 @@
   "waves": {
     "first_wave_sec": 30,
     "interval_sec": 35,
-    "count_base": 3,
-    "count_per_wave": 1.5,
-    "enemy_hp_base": 10,
-    "enemy_travel_sec": 12,
+    "count_base": 2,
+    "count_per_wave": 0.6,
+    "enemy_hp_base": 30,
+    "enemy_travel_sec": 16,
     "hp_growth_per_wave": 1.12,
     "hp_growth_per_layer": 0.15
   },

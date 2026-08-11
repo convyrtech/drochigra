@@ -127,12 +127,12 @@ describe('createDefense', () => {
 
 describe('wave numbers', () => {
   it('grows the enemy count wave by wave', () => {
-    // floor(count_base + count_per_wave * wave) with the shipped 3 and 1.5.
-    expect(waveEnemyCount(balance, 1)).toBe(4);
-    expect(waveEnemyCount(balance, 2)).toBe(6);
-    expect(waveEnemyCount(balance, 3)).toBe(7);
-    expect(waveEnemyCount(balance, 4)).toBe(9);
-    expect(waveEnemyCount(balance, 5)).toBe(10);
+    // floor(count_base + count_per_wave * wave) with the shipped 2 and 0.6.
+    expect(waveEnemyCount(balance, 1)).toBe(2);
+    expect(waveEnemyCount(balance, 2)).toBe(3);
+    expect(waveEnemyCount(balance, 3)).toBe(3);
+    expect(waveEnemyCount(balance, 4)).toBe(4);
+    expect(waveEnemyCount(balance, 5)).toBe(5);
   });
 
   it('grows the enemy health by wave, by layer and by type', () => {
