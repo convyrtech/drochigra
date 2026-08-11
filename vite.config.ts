@@ -15,7 +15,8 @@ export default defineConfig({
   },
   test: {
     include: ['tests/**/*.test.ts'],
-    exclude: ['tests/e2e/**'],
+    // Playwright specs live in tests/e2e and must stay out of vitest.
+    exclude: ['**/node_modules/**', 'dist/**', 'tests/e2e/**'],
     environment: 'node',
   },
 });
