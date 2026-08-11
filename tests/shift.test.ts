@@ -22,11 +22,19 @@ const balance = balanceJson as unknown as Balance;
 /** Column the drill starts in: middle of the grid. */
 const START_COL = Math.floor(balance.shift.grid_width / 2);
 
+/**
+ * No wave ever comes out this late. These tests are about the drill, the cargo
+ * and the timer; the dome defence has its own file, tests/defense.test.ts.
+ */
+const QUIET_WAVES = 1e9;
+
 /** Balance variant. Tests bend single numbers, they never invent new ones. */
 function balanceWith(patch: {
   cargoCapacity?: number;
   durationSec?: number;
   bankSec?: number;
+  firstWaveSec?: number;
+  domeHp?: number;
 }): Balance {
   return {
     ...balance,
@@ -38,6 +46,14 @@ function balanceWith(patch: {
     cargo: {
       ...balance.cargo,
       capacity_base: patch.cargoCapacity ?? balance.cargo.capacity_base,
+    },
+    dome: {
+      ...balance.dome,
+      hp_base: patch.domeHp ?? balance.dome.hp_base,
+    },
+    waves: {
+      ...balance.waves,
+      first_wave_sec: patch.firstWaveSec ?? balance.waves.first_wave_sec,
     },
   };
 }
@@ -533,7 +549,7 @@ describe('shift timer', () => {
   /** One tap down, dug until the cargo is full: a known depth and a known load. */
   function shiftStoppedAtRow(rows: number): ShiftState {
     const capacity = layerYield(0) * rows;
-    const state = createShift(balanceWith({ cargoCapacity: capacity }), 1);
+    const state = createShift(balanceWith({ cargoCapacity: capacity, firstWaveSec: QUIET_WAVES }), 1);
     expect(aimDrill(state, START_COL, 1)).toBe(true);
     step(state, PER_CELL_SEC * (rows + 1));
     expect(state.drill.mode).toBe('blocked');
@@ -543,7 +559,7 @@ describe('shift timer', () => {
   }
 
   it('counts down and never goes below zero', () => {
-    const state = createShift(balance, 1);
+    const state = createShift(balanceWith({ firstWaveSec: QUIET_WAVES }), 1);
     step(state, 10);
     expect(state.timeLeftSec).toBeCloseTo(balance.shift.duration_sec - 10, 6);
     step(state, balance.shift.duration_sec);
@@ -580,7 +596,7 @@ describe('shift timer', () => {
   });
 
   it('accepts no orders once finished', () => {
-    const state = createShift(balance, 1);
+    const state = createShift(balanceWith({ firstWaveSec: QUIET_WAVES }), 1);
     step(state, balance.shift.duration_sec + balance.shift.elevator_bank_sec + 1);
     expect(state.phase).toBe('finished');
     expect(aimDrill(state, START_COL, 1)).toBe(false);
@@ -605,7 +621,7 @@ describe('shift timer', () => {
 });
 
 describe('crystals', () => {
-  const deepBalance = balanceWith({ cargoCapacity: 1e6, durationSec: 1e6 });
+  const deepBalance = balanceWith({ cargoCapacity: 1e6, durationSec: 1e6, firstWaveSec: QUIET_WAVES });
 
   /** Digs a wide field in layers II and III and returns the crystal count. */
   function crystalRun(seed: number): number {
@@ -645,7 +661,10 @@ describe('crystals', () => {
 
   it('does not put crystals in the cargo and never loses them', () => {
     const load = layerYield(0) * 9 + layerYield(1) * 3;
-    const state = createShift(balanceWith({ cargoCapacity: load, durationSec: 1e6 }), 99);
+    const state = createShift(
+      balanceWith({ cargoCapacity: load, durationSec: 1e6, firstWaveSec: QUIET_WAVES }),
+      99,
+    );
     digDownTo(state, START_COL, 12);
     const crystals = state.crystals;
     expect(state.cargo).toBe(load);

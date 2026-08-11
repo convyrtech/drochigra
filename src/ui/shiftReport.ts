@@ -35,19 +35,25 @@ export function createShiftReport(
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.domeEdge);
 
+  const breach = report.endReason === 'breach';
   const title = scene.add
-    .text(width / 2, panelY + box.titleTop, 'СМЕНА ОКОНЧЕНА', {
+    .text(width / 2, panelY + box.titleTop, breach ? 'СМЕНА СОРВАНА' : 'СМЕНА ОКОНЧЕНА', {
       fontFamily: FONT_FAMILY,
       fontSize: font.large,
-      color: cssColor(COLORS.text),
+      color: cssColor(breach ? COLORS.warning : COLORS.text),
     })
     .setOrigin(0.5, 0);
 
   const lines: readonly (readonly [string, number])[] = [
     [`Добыто лома: ${report.mined}`, COLORS.scrap],
     [`Сдано лома: ${report.banked}`, COLORS.scrap],
+    // A breach is the only way the cargo is ever lost, so this line only shows up then.
+    ...(breach
+      ? ([[`Потеряно в карго: ${report.mined - report.banked}`, COLORS.warning]] as const)
+      : []),
     [`Глубина: ${report.deepestRow} из ${maxDepthRow}`, COLORS.text],
     [`Кристаллы: ${report.crystals}`, COLORS.crystal],
+    [`Волн пришло: ${report.waves}`, COLORS.textDim],
   ];
   const lineObjects = lines.map(([text, color], index) =>
     scene.add

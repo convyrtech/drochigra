@@ -67,6 +67,10 @@ export interface WavesBalance {
   readonly interval_sec: number;
   readonly count_base: number;
   readonly count_per_wave: number;
+  /** Health of an enemy with `hp_mult` 1 in wave 0 of the first layer. */
+  readonly enemy_hp_base: number;
+  /** Seconds an enemy with `speed` 1 needs to reach the dome from the edge. */
+  readonly enemy_travel_sec: number;
   readonly hp_growth_per_wave: number;
   readonly hp_growth_per_layer: number;
 }

@@ -3,11 +3,13 @@ import type { Balance } from '../sim/balance.js';
 import { layerIndexForRow } from '../sim/mining.js';
 import {
   aimDrill,
+  aimTurret,
   callElevator,
   cellAt,
   createShift,
   digProgress,
   ENTRANCE_ROW,
+  fireSalvo,
   isCargoBlocked,
   shiftReport,
   step,
@@ -15,6 +17,7 @@ import {
 } from '../sim/shift.js';
 import { createHud, type Hud } from '../ui/hud.js';
 import { createShiftReport } from '../ui/shiftReport.js';
+import { createDomeView, type DomeView } from './domeView.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from './layout.js';
 
 /** Depth order of the drawn parts. */
@@ -25,6 +28,8 @@ const LAYER_DEPTH = {
   progress: 3,
   drill: 4,
   hud: 10,
+  dome: 11,
+  alarm: 12,
   report: 20,
 } as const;
 
@@ -46,6 +51,7 @@ export class MainScene extends Phaser.Scene {
   private progress!: Phaser.GameObjects.Rectangle;
   private drill!: Phaser.GameObjects.Rectangle;
   private hud!: Hud;
+  private domeView!: DomeView;
   private reportShown = false;
 
   constructor(balance: Balance) {
@@ -72,11 +78,21 @@ export class MainScene extends Phaser.Scene {
       onBank: () => {
         callElevator(this.state);
       },
+      onSalvo: () => {
+        fireSalvo(this.state);
+      },
+    });
+    this.domeView = createDomeView(this, {
+      width,
+      height,
+      depth: LAYER_DEPTH.dome,
+      frameDepth: LAYER_DEPTH.alarm,
     });
 
     this.input.on(Phaser.Input.Events.POINTER_DOWN, this.onTap, this);
     this.followDrill();
     this.hud.update(this.state);
+    this.domeView.update(this.state);
   }
 
   override update(_time: number, deltaMs: number): void {
@@ -85,6 +101,7 @@ export class MainScene extends Phaser.Scene {
     this.paintDrill();
     this.followDrill();
     this.hud.update(this.state);
+    this.domeView.update(this.state);
 
     if (this.state.phase === 'finished' && !this.reportShown) {
       this.showReport();
@@ -206,7 +223,15 @@ export class MainScene extends Phaser.Scene {
   }
 
   private onTap(pointer: Phaser.Input.Pointer): void {
-    if (this.state.phase === 'finished' || pointer.y < this.domeHeight) {
+    if (this.state.phase === 'finished') {
+      return;
+    }
+    // Up in the dome zone a tap is an order for the turret, not for the drill.
+    if (pointer.y < this.domeHeight) {
+      const enemyId = this.domeView.pickEnemy(pointer.x, pointer.y);
+      if (enemyId !== null) {
+        aimTurret(this.state, enemyId);
+      }
       return;
     }
     const worldY = pointer.y + this.cameras.main.scrollY;

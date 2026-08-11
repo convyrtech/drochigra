@@ -1,5 +1,15 @@
 import type { Balance } from './balance.js';
-import { cellYield, crystalChance, digTimeSec, travelTimeSec } from './mining.js';
+import {
+  advanceDefense,
+  aimTurretAt,
+  clearEnemies,
+  createDefense,
+  defenseTimeToNextEvent,
+  fireSalvoAt,
+  resolveDefense,
+  type DefenseState,
+} from './defense.js';
+import { cellYield, crystalChance, digTimeSec, layerIndexForRow, travelTimeSec } from './mining.js';
 import { nextRandom, normalizeSeed } from './rng.js';
 
 /**
@@ -14,6 +24,10 @@ import { nextRandom, normalizeSeed } from './rng.js';
  * only, horizontally and vertically, along the shortest route it can find.
  * A tap is one decision, not one cell: after the cell it was sent to, the drill
  * keeps digging the same way until the grid ends or the cargo fills up.
+ *
+ * The dome defence (src/sim/defense.ts) runs on the same clock: waves come out
+ * while the shift is running and the drill never stops for them (PLAN_V1 §4).
+ * When the dome falls the shift ends at once and the unbanked cargo is lost.
  *
  * Time is consumed event by event inside `step`, so one long step gives exactly
  * the same state as many short ones.
@@ -74,6 +88,13 @@ export type ShiftPhase =
   /** Report on screen. */
   | 'finished';
 
+/**
+ * Why the shift is over. `timer` — the six minutes ran out and everything came
+ * up with the drill. `breach` — the dome fell, emergency ascent, the unbanked
+ * cargo is gone. Never a defeat: what was handed over stays (PLAN_V1 §2).
+ */
+export type ShiftEndReason = 'timer' | 'breach';
+
 export interface DrillTarget {
   readonly col: number;
   readonly row: number;
@@ -106,8 +127,12 @@ export interface ShiftState {
   readonly cells: CellState[];
   readonly seed: number;
   phase: ShiftPhase;
+  /** Set when the shift ends, null while it runs. */
+  endReason: ShiftEndReason | null;
   timeLeftSec: number;
   drill: DrillState;
+  /** Dome, waves and turret. Enemies only exist while the phase is `running`. */
+  defense: DefenseState;
   /** Scrap in the backpack: lost on an emergency ascent, banked at the elevator. */
   cargo: number;
   /** Scrap handed over. Safe forever (PLAN_V1 §2.1). */
@@ -126,6 +151,10 @@ export interface ShiftReport {
   readonly banked: number;
   readonly deepestRow: number;
   readonly crystals: number;
+  /** Null only while the shift is still on. */
+  readonly endReason: ShiftEndReason | null;
+  /** Waves that came out this shift. */
+  readonly waves: number;
 }
 
 /** Fresh shift: empty shaft, open entrance row, drill parked in the middle. */
@@ -157,6 +186,7 @@ export function createShift(balance: Balance, seed: number): ShiftState {
     cells,
     seed: normalizeSeed(seed),
     phase: 'running',
+    endReason: null,
     timeLeftSec: balance.shift.duration_sec,
     drill: {
       col: Math.floor(width / 2),
@@ -168,6 +198,7 @@ export function createShift(balance: Balance, seed: number): ShiftState {
       digTotalSec: 0,
       bankElapsedSec: 0,
     },
+    defense: createDefense(balance),
     cargo: 0,
     banked: 0,
     crystals: 0,
@@ -254,7 +285,15 @@ export function shiftReport(state: ShiftState): ShiftReport {
     banked: state.banked,
     deepestRow: state.deepestRow,
     crystals: state.crystals,
+    endReason: state.endReason,
+    waves: state.defense.wavesSent,
   };
+}
+
+/** Layer the drill sits in right now: it sets how tough a fresh wave is. */
+export function drillLayerIndex(state: ShiftState): number {
+  const row = Math.min(state.rowCount - 1, Math.max(0, Math.round(state.drill.row)));
+  return layerIndexForRow(state.balance.layers, row);
 }
 
 /* ------------------------------------------------------------------ orders */
@@ -290,6 +329,25 @@ export function callElevator(state: ShiftState): boolean {
   return true;
 }
 
+/**
+ * Point the turret at one enemy. It holds that target until the enemy dies or
+ * reaches the dome, then it goes back to shooting whoever is closest.
+ */
+export function aimTurret(state: ShiftState, enemyId: number): boolean {
+  if (state.phase !== 'running') {
+    return false;
+  }
+  return aimTurretAt(state.defense, enemyId);
+}
+
+/** One salvo over the whole screen. False while the cooldown is still running. */
+export function fireSalvo(state: ShiftState): boolean {
+  if (state.phase !== 'running') {
+    return false;
+  }
+  return fireSalvoAt(state.balance, state.defense);
+}
+
 /* -------------------------------------------------------------------- step */
 
 /** Advances the shift by `dtSec` seconds. Deterministic for any slicing of time. */
@@ -318,6 +376,7 @@ function timeToNextEvent(state: ShiftState): number {
   let time = Number.POSITIVE_INFINITY;
   if (state.phase === 'running') {
     time = Math.min(time, state.timeLeftSec);
+    time = Math.min(time, defenseTimeToNextEvent(state.balance, state.defense));
   }
   switch (drill.mode) {
     case 'moving':
@@ -341,6 +400,7 @@ function advance(state: ShiftState, dtSec: number): void {
   const { drill } = state;
   if (state.phase === 'running') {
     state.timeLeftSec = Math.max(0, state.timeLeftSec - dtSec);
+    advanceDefense(state.balance, state.defense, dtSec);
   }
   switch (drill.mode) {
     case 'moving':
@@ -373,10 +433,23 @@ function resolveOnce(state: ShiftState): boolean {
   if (state.phase === 'running' && state.timeLeftSec <= EPS) {
     state.timeLeftSec = 0;
     state.phase = 'ending';
+    state.endReason = 'timer';
+    // Enemies leave with the wave that sent them: the ascent is not a fight.
+    clearEnemies(state.defense);
     if (drill.mode !== 'banking') {
       beginAscent(state);
     }
     return true;
+  }
+
+  if (state.phase === 'running') {
+    if (resolveDefense(state.balance, state.defense, drillLayerIndex(state))) {
+      return true;
+    }
+    if (state.defense.hp <= EPS) {
+      breachDome(state);
+      return true;
+    }
   }
 
   if (state.phase === 'ending' && (drill.mode === 'idle' || drill.mode === 'blocked')) {
@@ -428,6 +501,26 @@ function beginAscent(state: ShiftState): void {
   }
   const last = route[route.length - 1] ?? start;
   setRoute(state, route, { col: last.col, row: last.row, kind: 'surface' });
+}
+
+/**
+ * The dome is down: emergency ascent, right now. The shift is over, the cargo
+ * that was not handed over is gone, everything already banked stays, and the
+ * depth reached still counts (PLAN_V1 §2). This is not a defeat screen.
+ */
+function breachDome(state: ShiftState): void {
+  const { drill } = state;
+  state.defense.hp = 0;
+  clearEnemies(state.defense);
+  state.cargo = 0;
+  state.endReason = 'breach';
+  state.phase = 'finished';
+  drill.mode = 'idle';
+  drill.target = null;
+  drill.path = [];
+  drill.digElapsedSec = 0;
+  drill.digTotalSec = 0;
+  drill.bankElapsedSec = 0;
 }
 
 /** Cells between the drill and the next cell on its route. */

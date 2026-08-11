@@ -7,8 +7,12 @@ export const VIEW = {
   /** Design resolution, portrait. Phaser scales it to any screen. */
   width: 720,
   height: 1280,
-  /** Top share of the screen taken by the dome zone; the rest is the shaft. */
-  domeHeightShare: 0.3,
+  /**
+   * Top share of the screen taken by the dome zone; the rest is the shaft.
+   * PLAN_V1 §3 asks for about a third: the zone has to hold the timer, the
+   * enemy corridor, the dome, two bars and two buttons.
+   */
+  domeHeightShare: 0.32,
 
   /** Gap between cells, in pixels. */
   cellGap: 3,
@@ -19,26 +23,63 @@ export const VIEW = {
   /** Height of the dig progress bar as a share of a cell. */
   digBarHeightShare: 0.16,
 
+  /** Rows of the dome zone, top to bottom. All values are pixels from its top. */
   hud: {
-    margin: 28,
-    timerY: 52,
-    statsTop: 128,
-    statsLine: 46,
-    cargoTop: 268,
-    cargoBarWidth: 430,
-    cargoBarHeight: 26,
-    statusY: 344,
-    bankButtonWidth: 190,
-    bankButtonHeight: 136,
-    bankButtonTop: 112,
+    margin: 24,
+    /** Banked scrap and crystals on the left, depth on the right. */
+    statsY: 6,
+    /** The shift timer, centred. Wave labels sit beside it, so it is not huge. */
+    timerY: 40,
+    /** Wave number on the left, countdown to the next wave on the right. */
+    sideY: 54,
+    /** Dome health and cargo share one row: the zone has no space to stack them. */
+    barTop: 268,
+    barHeight: 32,
+    barGap: 24,
+    statusY: 306,
+    buttonTop: 346,
+    buttonHeight: 56,
+    buttonGap: 24,
+  },
+
+  /** The dome shell, the corridor the enemies walk down and the alarm frame. */
+  dome: {
+    corridorTop: 100,
+    corridorBottom: 204,
+    /** Rows enemies of one wave are spread over, so they do not stack up. */
+    lanes: 3,
+    /** Each further row of a side starts this much of the way further back. */
+    rankShift: 0.1,
+    /** Turret muzzle: the top of the shell and the point every beam starts at. */
+    apexY: 210,
+    /** Where the shell meets the ground on both sides. */
+    baseY: 264,
+    halfWidth: 210,
+    /** Segments the shell arc is drawn with. */
+    arcSteps: 24,
+    turretWidth: 18,
+    turretHeight: 14,
+    /** Enemy walk: from this far off the edge to this far from the centre. */
+    edgeMargin: 26,
+    centerGap: 18,
+    enemyBarWidth: 26,
+    enemyBarHeight: 4,
+    enemyBarOffset: 16,
+    targetRingRadius: 20,
+    /** Taps this close to an enemy count as an order for the turret. */
+    pickRadius: 40,
+    beamWidth: 3,
+    frameWidth: 10,
+    /** One full pulse of the alarm frame, in seconds. */
+    framePulseSec: 1.1,
   },
 
   report: {
     panelWidth: 600,
-    panelHeight: 660,
+    panelHeight: 740,
     titleTop: 60,
     linesTop: 190,
-    lineHeight: 66,
+    lineHeight: 58,
     buttonWidth: 360,
     buttonHeight: 104,
     buttonBottom: 60,
@@ -74,8 +115,31 @@ export const COLORS = {
   warning: 0xff6b6b,
   button: 0x27577f,
   buttonEdge: 0x7fd4ff,
+  buttonOff: 0x121d2e,
   panel: 0x0d1524,
 } as const;
+
+/** Shapes an enemy can be drawn as. Only the view cares. */
+export type EnemyShape = 'circle' | 'square' | 'triangle';
+
+export interface EnemyStyle {
+  readonly shape: EnemyShape;
+  /** Half the size of the figure, in pixels. */
+  readonly size: number;
+  readonly color: number;
+}
+
+/**
+ * How each enemy of content/balance.json looks. Keys are the enemy keys of the
+ * balance; a type without a style here still gets drawn, just plainly.
+ */
+export const ENEMY_STYLE: Record<string, EnemyStyle> = {
+  aberration: { shape: 'circle', size: 11, color: 0xff9a6b },
+  drowned: { shape: 'square', size: 13, color: 0x7fb0ff },
+  moth: { shape: 'triangle', size: 10, color: 0xd9a6ff },
+};
+
+export const ENEMY_STYLE_FALLBACK: EnemyStyle = { shape: 'circle', size: 11, color: 0xe6ecff };
 
 /** Phaser text styles need a CSS colour, the shapes need the number. */
 export function cssColor(value: number): string {
