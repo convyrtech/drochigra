@@ -4,6 +4,10 @@ dist-ssr/
 build/
 .vite/
 coverage/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
 *.local
 *.log
 npm-debug.log*
