@@ -55,6 +55,8 @@
     "interval_sec": 35,
     "count_base": 3,
     "count_per_wave": 1.5,
+    "enemy_hp_base": 10,
+    "enemy_travel_sec": 12,
     "hp_growth_per_wave": 1.12,
     "hp_growth_per_layer": 0.15
   },
