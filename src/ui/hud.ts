@@ -149,7 +149,9 @@ function statusText(state: ShiftState): string {
     case 'idle':
       return 'ТКНИ КЛЕТКУ РЯДОМ С ПРОКОПАННОЙ';
     case 'moving':
-      return state.drill.target?.kind === 'surface' ? 'БУР ЕДЕТ К ЛИФТУ' : 'БУР ЕДЕТ К КЛЕТКЕ';
+      // Driving between two cells of the same dig order is part of digging:
+      // saying so keeps the line from flickering every fraction of a second.
+      return state.drill.target?.kind === 'surface' ? 'БУР ЕДЕТ К ЛИФТУ' : 'БУР КОПАЕТ';
     case 'digging':
       return 'БУР КОПАЕТ';
     case 'blocked':

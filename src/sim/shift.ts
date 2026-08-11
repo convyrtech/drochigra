@@ -10,6 +10,11 @@ import { nextRandom, normalizeSeed } from './rng.js';
  * Grid: `shift.grid_width` columns, rows 0..`shift.grid_depth`. Row 0 is the
  * mine entrance, it starts dug, and digging goes down from there.
  *
+ * The drill never leaves the tunnel: it drives cell by cell over dug cells
+ * only, horizontally and vertically, along the shortest route it can find.
+ * A tap is one decision, not one cell: after the cell it was sent to, the drill
+ * keeps digging the same way until the grid ends or the cargo fills up.
+ *
  * Time is consumed event by event inside `step`, so one long step gives exactly
  * the same state as many short ones.
  */
@@ -28,15 +33,34 @@ const MAX_TRANSITIONS = 64;
 
 export type CellState = 'rock' | 'dug';
 
+/** A cell on the grid. */
+export interface GridPos {
+  readonly col: number;
+  readonly row: number;
+}
+
+/**
+ * The four edge neighbours, in the order routes prefer them. The drill digs
+ * a cell while standing on one of its dug neighbours, and it goes on in the
+ * direction of that last step — preferring the neighbour above keeps a tap
+ * digging downwards, which is what depth is for.
+ */
+const STEPS: readonly GridPos[] = [
+  { col: 0, row: -1 },
+  { col: -1, row: 0 },
+  { col: 1, row: 0 },
+  { col: 0, row: 1 },
+];
+
 /** What the drill is doing right now. */
 export type DrillMode =
   /** Waiting for an order. */
   | 'idle'
-  /** Driving to the target cell or up to the elevator. */
+  /** Driving through the tunnel to the cell it digs from, or up to the elevator. */
   | 'moving'
-  /** Standing on the target cell, drilling it. */
+  /** Standing in the tunnel, drilling the target cell next to it. */
   | 'digging'
-  /** On the target cell but the cargo has no room: it does not start the cell. */
+  /** In place but the cargo has no room: it does not start the cell. */
   | 'blocked'
   /** At the entrance, handing the cargo over. */
   | 'banking';
@@ -53,15 +77,21 @@ export type ShiftPhase =
 export interface DrillTarget {
   readonly col: number;
   readonly row: number;
-  readonly kind: 'cell' | 'surface';
+  /**
+   * `cell` — rock to dig, `surface` — elevator cell to bank at,
+   * `park` — dug cell to drive into and stop.
+   */
+  readonly kind: 'cell' | 'surface' | 'park';
 }
 
 export interface DrillState {
-  /** Position in grid cells; fractional while driving. */
+  /** Position in grid cells; fractional while driving between two cells. */
   col: number;
   row: number;
   mode: DrillMode;
   target: DrillTarget | null;
+  /** Dug cells left to drive through, in order. Empty once the drive is over. */
+  path: GridPos[];
   digElapsedSec: number;
   digTotalSec: number;
   bankElapsedSec: number;
@@ -133,6 +163,7 @@ export function createShift(balance: Balance, seed: number): ShiftState {
       row: ENTRANCE_ROW,
       mode: 'idle',
       target: null,
+      path: [],
       digElapsedSec: 0,
       digTotalSec: 0,
       bankElapsedSec: 0,
@@ -229,25 +260,27 @@ export function shiftReport(state: ShiftState): ShiftReport {
 /* ------------------------------------------------------------------ orders */
 
 /**
- * Send the drill to a cell. Retargets whatever it was doing, losing the
- * progress of the cell it was on. Returns false when the cell cannot be dug,
- * and while the cargo is being handed over: an interrupted hand-over would
- * waste the whole trip up.
+ * Send the drill to dig a cell. It drives there through the tunnel and then
+ * keeps digging the same way on its own. Retargets whatever it was doing,
+ * losing the progress of the cell it was on.
+ *
+ * Returns false when the cell cannot be dug, when no tunnel leads to it, and
+ * while the cargo is being handed over: an interrupted hand-over would waste
+ * the whole trip up.
  */
 export function aimDrill(state: ShiftState, col: number, row: number): boolean {
   if (state.phase !== 'running' || state.drill.mode === 'banking' || !canDig(state, col, row)) {
     return false;
   }
-  const { drill } = state;
-  drill.target = { col, row, kind: 'cell' };
-  drill.mode = 'moving';
-  drill.digElapsedSec = 0;
-  drill.digTotalSec = 0;
-  drill.bankElapsedSec = 0;
+  const route = routeToDig(state, startCell(state), col, row);
+  if (!route) {
+    return false;
+  }
+  setRoute(state, route, { col, row, kind: 'cell' });
   return true;
 }
 
-/** Call the elevator: the drill drives up its own column and hands the cargo over. */
+/** Call the elevator: the drill drives up through the tunnel and hands the cargo over. */
 export function callElevator(state: ShiftState): boolean {
   const { drill } = state;
   if (state.phase === 'finished' || drill.mode === 'banking') {
@@ -288,7 +321,7 @@ function timeToNextEvent(state: ShiftState): number {
   }
   switch (drill.mode) {
     case 'moving':
-      time = Math.min(time, travelTimeSec(distanceToTarget(state), state.balance.drill.move_rows_per_sec));
+      time = Math.min(time, travelTimeSec(distanceToNextStep(state), state.balance.drill.move_rows_per_sec));
       break;
     case 'digging':
       time = Math.min(time, drill.digTotalSec - drill.digElapsedSec);
@@ -353,7 +386,7 @@ function resolveOnce(state: ShiftState): boolean {
 
   switch (drill.mode) {
     case 'moving':
-      if (distanceToTarget(state) > EPS) {
+      if (drill.path.length > 0) {
         return false;
       }
       arrive(state);
@@ -378,50 +411,68 @@ function resolveOnce(state: ShiftState): boolean {
 
 function beginAscent(state: ShiftState): void {
   const { drill } = state;
-  const col = Math.min(state.width - 1, Math.max(0, Math.round(drill.col)));
-  drill.target = { col, row: ENTRANCE_ROW, kind: 'surface' };
-  drill.mode = 'moving';
-  drill.digElapsedSec = 0;
-  drill.digTotalSec = 0;
-  drill.bankElapsedSec = 0;
+  const start = startCell(state);
+  const route = routeToSurface(state, start);
+  if (!route) {
+    // Every dug cell touches row 0 through the tunnel it was dug from, so this
+    // only guards a broken grid: hand the cargo over where the drill stands.
+    drill.path = [];
+    drill.col = Math.min(state.width - 1, Math.max(0, Math.round(drill.col)));
+    drill.row = ENTRANCE_ROW;
+    drill.target = { col: drill.col, row: ENTRANCE_ROW, kind: 'surface' };
+    drill.mode = 'banking';
+    drill.digElapsedSec = 0;
+    drill.digTotalSec = 0;
+    drill.bankElapsedSec = 0;
+    return;
+  }
+  const last = route[route.length - 1] ?? start;
+  setRoute(state, route, { col: last.col, row: last.row, kind: 'surface' });
 }
 
-function distanceToTarget(state: ShiftState): number {
+/** Cells between the drill and the next cell on its route. */
+function distanceToNextStep(state: ShiftState): number {
   const { drill } = state;
-  if (!drill.target) {
+  const next = drill.path[0];
+  if (!next) {
     return 0;
   }
-  return Math.hypot(drill.target.col - drill.col, drill.target.row - drill.row);
+  return Math.abs(next.col - drill.col) + Math.abs(next.row - drill.row);
 }
 
 function moveDrill(state: ShiftState, dtSec: number): void {
   const { drill } = state;
-  const target = drill.target;
-  if (!target) {
+  let reach = state.balance.drill.move_rows_per_sec * dtSec;
+  while (reach > EPS) {
+    const next = drill.path[0];
+    if (!next) {
+      return;
+    }
+    const dCol = next.col - drill.col;
+    const dRow = next.row - drill.row;
+    const distance = Math.abs(dCol) + Math.abs(dRow);
+    if (distance <= reach + EPS) {
+      drill.col = next.col;
+      drill.row = next.row;
+      drill.path.shift();
+      reach -= distance;
+      continue;
+    }
+    const share = reach / distance;
+    drill.col += dCol * share;
+    drill.row += dRow * share;
     return;
   }
-  const dCol = target.col - drill.col;
-  const dRow = target.row - drill.row;
-  const distance = Math.hypot(dCol, dRow);
-  const reach = state.balance.drill.move_rows_per_sec * dtSec;
-  if (distance <= EPS || distance <= reach) {
-    drill.col = target.col;
-    drill.row = target.row;
-    return;
-  }
-  drill.col += (dCol / distance) * reach;
-  drill.row += (dRow / distance) * reach;
 }
 
 function arrive(state: ShiftState): void {
   const { drill } = state;
   const target = drill.target;
+  drill.path = [];
   if (!target) {
     drill.mode = 'idle';
     return;
   }
-  drill.col = target.col;
-  drill.row = target.row;
 
   if (target.kind === 'surface') {
     drill.mode = 'banking';
@@ -429,14 +480,14 @@ function arrive(state: ShiftState): void {
     return;
   }
 
-  if (cellAt(state, target.col, target.row) === 'dug') {
+  if (target.kind === 'park' || cellAt(state, target.col, target.row) === 'dug') {
     drill.mode = 'idle';
     drill.target = null;
     return;
   }
 
-  // Full cargo stops the drill: it never starts a cell whose scrap would not
-  // fit, so nothing mined is ever thrown away (PLAN_V1 §4).
+  // Full cargo stops the drill in the tunnel: it never starts a cell whose
+  // scrap would not fit, so nothing mined is ever thrown away (PLAN_V1 §4).
   if (cellYield(state.balance.layers, target.row) > cargoFree(state) + EPS) {
     drill.mode = 'blocked';
     return;
@@ -464,10 +515,17 @@ function completeDig(state: ShiftState): void {
   }
   rollCrystal(state, target.row);
 
-  drill.col = target.col;
-  drill.row = target.row;
-  drill.mode = 'idle';
-  drill.target = null;
+  // One tap is one decision: the drill drives into the cell it has just opened
+  // and goes on digging the same way, until the grid ends or the cargo fills up.
+  const dCol = target.col - drill.col;
+  const dRow = target.row - drill.row;
+  const entered: GridPos = { col: target.col, row: target.row };
+  const ahead: GridPos = { col: target.col + dCol, row: target.row + dRow };
+  drill.path = [entered];
+  drill.target = canDig(state, ahead.col, ahead.row)
+    ? { col: ahead.col, row: ahead.row, kind: 'cell' }
+    : { col: entered.col, row: entered.row, kind: 'park' };
+  drill.mode = 'moving';
   drill.digElapsedSec = 0;
   drill.digTotalSec = 0;
 }
@@ -477,6 +535,7 @@ function completeBank(state: ShiftState): void {
   state.banked += state.cargo;
   state.cargo = 0;
   drill.target = null;
+  drill.path = [];
   drill.bankElapsedSec = 0;
   drill.mode = 'idle';
   if (state.phase === 'ending') {
@@ -491,4 +550,140 @@ function rollCrystal(state: ShiftState, row: number): void {
   if (draw.value < crystalChance(state.balance.layers, row)) {
     state.crystals += 1;
   }
+}
+
+/* ------------------------------------------------------------------- routes */
+
+/** Cell a route starts from: the one the drill is entering, or the one it stands on. */
+function startCell(state: ShiftState): GridPos {
+  const { drill } = state;
+  const pending = drill.mode === 'moving' ? drill.path[0] : undefined;
+  if (pending) {
+    return pending;
+  }
+  return { col: Math.round(drill.col), row: Math.round(drill.row) };
+}
+
+/**
+ * Puts the drill on a route. The cell it is already driving into stays the
+ * first step: the drill cannot turn around in the middle of a cell.
+ */
+function setRoute(state: ShiftState, route: readonly GridPos[], target: DrillTarget): void {
+  const { drill } = state;
+  const pending = drill.mode === 'moving' ? drill.path[0] : undefined;
+  drill.path = pending ? [pending, ...route] : [...route];
+  drill.target = target;
+  drill.mode = 'moving';
+  drill.digElapsedSec = 0;
+  drill.digTotalSec = 0;
+  drill.bankElapsedSec = 0;
+}
+
+interface Reach {
+  /** Distance in cells from the start, -1 when unreachable. */
+  readonly dist: number[];
+  /** Index of the previous cell on the shortest route, -1 when there is none. */
+  readonly prev: number[];
+}
+
+function cellIndex(state: ShiftState, pos: GridPos): number {
+  return pos.row * state.width + pos.col;
+}
+
+/** Breadth-first walk over dug cells: the drill only drives through the tunnel. */
+function reachFrom(state: ShiftState, start: GridPos): Reach {
+  const size = state.width * state.rowCount;
+  const dist = new Array<number>(size).fill(-1);
+  const prev = new Array<number>(size).fill(-1);
+  if (!isDug(state, start.col, start.row)) {
+    return { dist, prev };
+  }
+
+  const startIndex = cellIndex(state, start);
+  dist[startIndex] = 0;
+  const queue: number[] = [startIndex];
+  for (let head = 0; head < queue.length; head += 1) {
+    const from = queue[head] ?? 0;
+    const fromCol = from % state.width;
+    const fromRow = (from - fromCol) / state.width;
+    const fromDist = dist[from] ?? 0;
+    for (const stepPos of STEPS) {
+      const col = fromCol + stepPos.col;
+      const row = fromRow + stepPos.row;
+      if (!isDug(state, col, row)) {
+        continue;
+      }
+      const index = row * state.width + col;
+      if ((dist[index] ?? -1) >= 0) {
+        continue;
+      }
+      dist[index] = fromDist + 1;
+      prev[index] = from;
+      queue.push(index);
+    }
+  }
+  return { dist, prev };
+}
+
+/** Cells to drive through to get from `start` to `goal`, `start` excluded. */
+function routeCells(state: ShiftState, reach: Reach, start: GridPos, goal: GridPos): GridPos[] {
+  const startIndex = cellIndex(state, start);
+  const cells: GridPos[] = [];
+  let index = cellIndex(state, goal);
+  while (index !== startIndex) {
+    const col = index % state.width;
+    cells.push({ col, row: (index - col) / state.width });
+    const back = reach.prev[index] ?? -1;
+    if (back < 0) {
+      return [];
+    }
+    index = back;
+  }
+  cells.reverse();
+  return cells;
+}
+
+/**
+ * Route to a cell the target can be dug from: the nearest dug edge neighbour
+ * of the target, ties broken by `STEPS`. Null when no tunnel leads there.
+ */
+function routeToDig(state: ShiftState, start: GridPos, col: number, row: number): GridPos[] | null {
+  const reach = reachFrom(state, start);
+  let best: GridPos | null = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const stepPos of STEPS) {
+    const launch: GridPos = { col: col + stepPos.col, row: row + stepPos.row };
+    if (!isDug(state, launch.col, launch.row)) {
+      continue;
+    }
+    const dist = reach.dist[cellIndex(state, launch)] ?? -1;
+    if (dist < 0 || dist >= bestDist) {
+      continue;
+    }
+    best = launch;
+    bestDist = dist;
+  }
+  if (!best) {
+    return null;
+  }
+  return routeCells(state, reach, start, best);
+}
+
+/** Route up to the nearest entrance cell. Null when no tunnel leads there. */
+function routeToSurface(state: ShiftState, start: GridPos): GridPos[] | null {
+  const reach = reachFrom(state, start);
+  let best: GridPos | null = null;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (let col = 0; col < state.width; col += 1) {
+    const dist = reach.dist[cellIndex(state, { col, row: ENTRANCE_ROW })] ?? -1;
+    if (dist < 0 || dist >= bestDist) {
+      continue;
+    }
+    best = { col, row: ENTRANCE_ROW };
+    bestDist = dist;
+  }
+  if (!best) {
+    return null;
+  }
+  return routeCells(state, reach, start, best);
 }

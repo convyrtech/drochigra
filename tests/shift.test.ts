@@ -62,13 +62,22 @@ function layerYield(layerIndex: number): number {
   return layer.yield;
 }
 
-/** Digs one cell to the end, one order at a time, and returns the time spent. */
+/** Digging one cell: drill it from the tunnel, then drive into it. */
+const PER_CELL_SEC = digSec(0) + travelSec(1);
+
+/**
+ * Digs one cell to the end and returns the time spent. Waits until the drill
+ * has driven into the fresh cell, which is where the next order starts from.
+ */
 function digCell(state: ShiftState, col: number, row: number): number {
   expect(aimDrill(state, col, row)).toBe(true);
   let spent = 0;
-  const limit = 1000;
+  const limit = 2000;
   for (let guard = 0; guard < limit; guard += 1) {
-    if (isDug(state, col, row) || state.phase !== 'running') {
+    if (state.phase !== 'running') {
+      return spent;
+    }
+    if (isDug(state, col, row) && state.drill.col === col && state.drill.row === row) {
       return spent;
     }
     step(state, 0.05);
@@ -84,6 +93,30 @@ function digDownTo(state: ShiftState, col: number, toRow: number): void {
       digCell(state, col, row);
     }
   }
+}
+
+/** Gallery along one row, from `fromCol` leftwards to `toCol` inclusive. */
+function digLeftTo(state: ShiftState, row: number, fromCol: number, toCol: number): void {
+  for (let col = fromCol; col >= toCol; col -= 1) {
+    if (!isDug(state, col, row)) {
+      digCell(state, col, row);
+    }
+  }
+}
+
+/** Seconds the drill needs to reach the elevator after it is called. */
+function timeToBank(state: ShiftState): number {
+  expect(callElevator(state)).toBe(true);
+  const dt = 0.005;
+  let spent = 0;
+  for (let guard = 0; guard < 4000; guard += 1) {
+    if (state.drill.mode === 'banking') {
+      return spent;
+    }
+    step(state, dt);
+    spent += dt;
+  }
+  throw new Error('the drill never reached the elevator');
 }
 
 /** Runs the timer out without spending any surplus time on the ascent. */
@@ -126,10 +159,11 @@ describe('neighbour rule', () => {
     const state = createShift(balance, 1);
     digCell(state, START_COL, 1);
     expect(isDug(state, START_COL, 1)).toBe(true);
+    const order = state.drill.target;
     // (START_COL + 1, 2) touches the dug (START_COL, 1) only by a corner.
     expect(canDig(state, START_COL + 1, 2)).toBe(false);
     expect(aimDrill(state, START_COL + 1, 2)).toBe(false);
-    expect(state.drill.target).toBeNull();
+    expect(state.drill.target).toEqual(order);
   });
 
   it('refuses cells outside the grid', () => {
@@ -151,18 +185,23 @@ describe('neighbour rule', () => {
 });
 
 describe('travel time', () => {
-  it('spends one row of road before the drill starts digging', () => {
+  it('digs the neighbouring cell from where it stands, then drives into it', () => {
     const state = createShift(balance, 1);
     expect(aimDrill(state, START_COL, 1)).toBe(true);
 
-    step(state, travelSec(1) - 0.001);
-    expect(state.drill.mode).toBe('moving');
-    expect(state.drill.row).toBeLessThan(1);
-    expect(digProgress(state)).toBe(0);
-
-    step(state, 0.002);
+    // The entrance row is already a tunnel, so there is no road to pay first.
+    step(state, 0.01);
     expect(state.drill.mode).toBe('digging');
-    expect(state.drill.row).toBeCloseTo(1, 10);
+    expect(state.drill.row).toBe(ENTRANCE_ROW);
+
+    step(state, digSec(0));
+    expect(isDug(state, START_COL, 1)).toBe(true);
+    expect(state.drill.mode).toBe('moving');
+    expect(state.drill.row).toBeGreaterThan(ENTRANCE_ROW);
+    expect(state.drill.row).toBeLessThan(1);
+
+    step(state, travelSec(1));
+    expect(state.drill.row).toBe(1);
   });
 
   it('scales the road with the number of rows', () => {
@@ -196,12 +235,146 @@ describe('travel time', () => {
   });
 });
 
+describe('tunnel routes', () => {
+  it('counts the cells of the tunnel, not the straight line', () => {
+    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
+    digDownTo(state, START_COL, 6);
+    digLeftTo(state, 6, START_COL - 1, 0);
+    expect(state.drill.col).toBe(0);
+    expect(state.drill.row).toBe(6);
+
+    // (START_COL + 1, 1) is dug from (START_COL, 1): four cells back along the
+    // gallery plus five up the shaft, while the straight line is about 6.4.
+    expect(aimDrill(state, START_COL + 1, 1)).toBe(true);
+    step(state, travelSec(6.5));
+    expect(state.drill.mode).toBe('moving');
+
+    step(state, travelSec(9) - travelSec(6.5) + 0.002);
+    expect(state.drill.mode).toBe('digging');
+    expect(state.drill.col).toBe(START_COL);
+    expect(state.drill.row).toBe(1);
+  });
+
+  it('ignores a target no tunnel leads to', () => {
+    const state = createShift(balance, 1);
+    // A dug pocket cut off from the mine: the drill must not teleport into it.
+    state.cells[5 * state.width + 0] = 'dug';
+
+    expect(canDig(state, 0, 6)).toBe(true);
+    expect(aimDrill(state, 0, 6)).toBe(false);
+    expect(state.drill.mode).toBe('idle');
+    expect(state.drill.target).toBeNull();
+  });
+
+  it('makes a winding way back to the elevator cost more than a straight one', () => {
+    const straight = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
+    digDownTo(straight, START_COL, 5);
+    const straightSec = timeToBank(straight);
+
+    const winding = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
+    digDownTo(winding, START_COL, 5);
+    digLeftTo(winding, 5, START_COL - 1, 0);
+    const windingSec = timeToBank(winding);
+
+    // Straight: five rows up. Winding: four cells of gallery plus five rows.
+    expect(straightSec).toBeCloseTo(travelSec(5), 2);
+    expect(windingSec).toBeCloseTo(travelSec(9), 2);
+    expect(windingSec).toBeGreaterThan(straightSec);
+  });
+});
+
+describe('one tap keeps the drill digging', () => {
+  it('digs on downwards after the cell it was sent to', () => {
+    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
+    expect(aimDrill(state, START_COL, 1)).toBe(true);
+
+    step(state, PER_CELL_SEC * 4);
+    for (let row = 1; row <= 4; row += 1) {
+      expect(isDug(state, START_COL, row)).toBe(true);
+    }
+    expect(isDug(state, START_COL, 5)).toBe(false);
+    expect(state.drill.col).toBe(START_COL);
+    expect(state.drill.row).toBe(4);
+  });
+
+  it('goes on sideways when the tap was sideways', () => {
+    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
+    digDownTo(state, START_COL, 2);
+    expect(aimDrill(state, START_COL - 1, 2)).toBe(true);
+
+    step(state, PER_CELL_SEC * 3);
+    expect(isDug(state, START_COL - 1, 2)).toBe(true);
+    expect(isDug(state, START_COL - 2, 2)).toBe(true);
+    expect(isDug(state, START_COL - 3, 2)).toBe(true);
+    expect(isDug(state, START_COL, 3)).toBe(false);
+  });
+
+  it('stops at the bottom of the grid', () => {
+    const bottom = balance.shift.grid_depth;
+    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
+    expect(aimDrill(state, START_COL, 1)).toBe(true);
+
+    step(state, 60);
+    expect(isDug(state, START_COL, bottom)).toBe(true);
+    expect(state.deepestRow).toBe(bottom);
+    expect(state.drill.row).toBe(bottom);
+    expect(state.drill.mode).toBe('idle');
+    expect(state.drill.target).toBeNull();
+    expect(state.phase).toBe('running');
+  });
+
+  it('stops at the wall when it digs sideways', () => {
+    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
+    digDownTo(state, START_COL, 1);
+    expect(aimDrill(state, START_COL - 1, 1)).toBe(true);
+
+    step(state, PER_CELL_SEC * START_COL + 1);
+    for (let col = 0; col < START_COL; col += 1) {
+      expect(isDug(state, col, 1)).toBe(true);
+    }
+    expect(state.drill.col).toBe(0);
+    expect(state.drill.mode).toBe('idle');
+    expect(state.drill.target).toBeNull();
+  });
+
+  it('stops when the cargo is full and keeps every gram', () => {
+    const capacity = layerYield(0) * 3;
+    const state = createShift(balanceWith({ cargoCapacity: capacity }), 1);
+    expect(aimDrill(state, START_COL, 1)).toBe(true);
+
+    step(state, 20);
+    expect(state.drill.mode).toBe('blocked');
+    expect(state.drill.row).toBe(3);
+    expect(isDug(state, START_COL, 3)).toBe(true);
+    expect(isDug(state, START_COL, 4)).toBe(false);
+    expect(state.cargo).toBe(capacity);
+    expect(state.mined).toBe(capacity);
+    expect(state.banked).toBe(0);
+  });
+
+  it('waits for the player after banking instead of digging on', () => {
+    const capacity = layerYield(0) * 2;
+    const state = createShift(balanceWith({ cargoCapacity: capacity }), 1);
+    aimDrill(state, START_COL, 1);
+    step(state, 20);
+    expect(state.drill.mode).toBe('blocked');
+
+    expect(callElevator(state)).toBe(true);
+    step(state, travelSec(2) + balance.shift.elevator_bank_sec + 0.01);
+    expect(state.banked).toBe(capacity);
+    expect(state.drill.mode).toBe('idle');
+
+    step(state, 5);
+    expect(state.drill.mode).toBe('idle');
+    expect(state.drill.target).toBeNull();
+    expect(state.cargo).toBe(0);
+  });
+});
+
 describe('dig time by layer', () => {
   it('takes the hardness of the first layer on row 1', () => {
     const state = createShift(balance, 1);
     expect(aimDrill(state, START_COL, 1)).toBe(true);
-    step(state, travelSec(1));
-    expect(state.drill.mode).toBe('digging');
 
     step(state, digSec(0) - 0.002);
     expect(isDug(state, START_COL, 1)).toBe(false);
@@ -250,7 +423,7 @@ describe('dig time by layer', () => {
   it('retargeting loses the progress of the abandoned cell', () => {
     const state = createShift(balance, 1);
     aimDrill(state, START_COL, 1);
-    step(state, travelSec(1) + digSec(0) / 2);
+    step(state, digSec(0) / 2);
     expect(digProgress(state)).toBeGreaterThan(0);
 
     expect(aimDrill(state, START_COL + 1, 1)).toBe(true);
@@ -269,7 +442,7 @@ describe('cargo', () => {
     digCell(state, START_COL, 2);
     expect(state.cargo).toBe(capacity);
 
-    // Third cell does not fit: the drill drives there and stands still.
+    // Third cell does not fit: the drill stays in the tunnel and stands still.
     expect(aimDrill(state, START_COL, 3)).toBe(true);
     step(state, 10);
     expect(state.drill.mode).toBe('blocked');
@@ -357,6 +530,18 @@ describe('elevator', () => {
 });
 
 describe('shift timer', () => {
+  /** One tap down, dug until the cargo is full: a known depth and a known load. */
+  function shiftStoppedAtRow(rows: number): ShiftState {
+    const capacity = layerYield(0) * rows;
+    const state = createShift(balanceWith({ cargoCapacity: capacity }), 1);
+    expect(aimDrill(state, START_COL, 1)).toBe(true);
+    step(state, PER_CELL_SEC * (rows + 1));
+    expect(state.drill.mode).toBe('blocked');
+    expect(state.drill.row).toBe(rows);
+    expect(state.cargo).toBe(capacity);
+    return state;
+  }
+
   it('counts down and never goes below zero', () => {
     const state = createShift(balance, 1);
     step(state, 10);
@@ -366,10 +551,8 @@ describe('shift timer', () => {
   });
 
   it('ascends automatically when the time is out and banks everything', () => {
-    const state = createShift(balance, 1);
-    digDownTo(state, START_COL, 3);
+    const state = shiftStoppedAtRow(3);
     const carried = state.cargo;
-    expect(carried).toBeGreaterThan(0);
 
     runTimerOut(state);
     expect(state.phase).toBe('ending');
@@ -384,8 +567,7 @@ describe('shift timer', () => {
   });
 
   it('takes the road and the hand-over before the report shows up', () => {
-    const state = createShift(balance, 1);
-    digDownTo(state, START_COL, 3);
+    const state = shiftStoppedAtRow(3);
     runTimerOut(state);
 
     step(state, travelSec(3) - 0.002);
@@ -404,15 +586,14 @@ describe('shift timer', () => {
     expect(aimDrill(state, START_COL, 1)).toBe(false);
     expect(callElevator(state)).toBe(false);
 
-    const before = { ...state.drill };
+    const before = { ...state.drill, path: [...state.drill.path] };
     step(state, 60);
     expect(state.drill).toEqual(before);
     expect(state.timeLeftSec).toBe(0);
   });
 
   it('reports what the shift produced', () => {
-    const state = createShift(balance, 1);
-    digDownTo(state, START_COL, 4);
+    const state = shiftStoppedAtRow(4);
     step(state, balance.shift.duration_sec + travelSec(4) + balance.shift.elevator_bank_sec + 0.01);
 
     const report = shiftReport(state);
@@ -463,15 +644,16 @@ describe('crystals', () => {
   });
 
   it('does not put crystals in the cargo and never loses them', () => {
-    const state = createShift(deepBalance, 99);
+    const load = layerYield(0) * 9 + layerYield(1) * 3;
+    const state = createShift(balanceWith({ cargoCapacity: load, durationSec: 1e6 }), 99);
     digDownTo(state, START_COL, 12);
     const crystals = state.crystals;
-    const cargo = state.cargo;
-    expect(cargo).toBe(layerYield(0) * 9 + layerYield(1) * 3);
+    expect(state.cargo).toBe(load);
 
-    step(state, deepBalance.shift.duration_sec + 100);
+    step(state, state.balance.shift.duration_sec + 100);
     expect(state.phase).toBe('finished');
     expect(state.crystals).toBe(crystals);
+    expect(state.banked).toBe(load);
   });
 });
 
