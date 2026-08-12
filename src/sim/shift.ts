@@ -126,6 +126,10 @@ export interface ShiftState {
   /** Row-major grid, index = row * width + col. */
   readonly cells: CellState[];
   readonly seed: number;
+  /** Row the elevator dropped the drill at. The shaft above it starts dug. */
+  readonly startRow: number;
+  /** Conveyor: every dug cell is handed over at once, the drill never ascends. */
+  readonly autoBank: boolean;
   phase: ShiftPhase;
   /** Set when the shift ends, null while it runs. */
   endReason: ShiftEndReason | null;
@@ -157,8 +161,23 @@ export interface ShiftReport {
   readonly waves: number;
 }
 
+/**
+ * How the elevator sets a shift up. Both fields come from the base screen
+ * (src/ui/baseScreen.ts): what the player bought, not what the shift decides.
+ */
+export interface ShiftSetup {
+  /**
+   * Row the elevator drops the drill at. The shaft down to it starts dug — the
+   * elevator has been there before — so the drill can always drive back up.
+   * Whether the row is an open checkpoint is the base screen's business.
+   */
+  readonly startRow?: number;
+  /** Conveyor bought: scrap is handed over as it is dug, nothing can be lost. */
+  readonly autoBank?: boolean;
+}
+
 /** Fresh shift: empty shaft, open entrance row, drill parked in the middle. */
-export function createShift(balance: Balance, seed: number): ShiftState {
+export function createShift(balance: Balance, seed: number, setup: ShiftSetup = {}): ShiftState {
   const width = balance.shift.grid_width;
   const rowCount = balance.shift.grid_depth + 1;
   if (!Number.isInteger(width) || width <= 0) {
@@ -174,9 +193,20 @@ export function createShift(balance: Balance, seed: number): ShiftState {
     throw new RangeError(`drill.speed_base must be positive, got ${balance.drill.speed_base}`);
   }
 
+  const startRow = setup.startRow ?? ENTRANCE_ROW;
+  if (!Number.isInteger(startRow) || startRow < ENTRANCE_ROW || startRow >= rowCount) {
+    throw new RangeError(`startRow must be a row of the grid, got ${startRow}`);
+  }
+
+  const startCol = Math.floor(width / 2);
   const cells: CellState[] = new Array<CellState>(width * rowCount).fill('rock');
   for (let col = 0; col < width; col += 1) {
     cells[ENTRANCE_ROW * width + col] = 'dug';
+  }
+  // The elevator shaft: the drill is lowered through it and rides it back up.
+  // Its cells are open, not mined — they bring neither scrap nor crystals.
+  for (let row = ENTRANCE_ROW + 1; row <= startRow; row += 1) {
+    cells[row * width + startCol] = 'dug';
   }
 
   return {
@@ -185,12 +215,14 @@ export function createShift(balance: Balance, seed: number): ShiftState {
     rowCount,
     cells,
     seed: normalizeSeed(seed),
+    startRow,
+    autoBank: setup.autoBank === true,
     phase: 'running',
     endReason: null,
     timeLeftSec: balance.shift.duration_sec,
     drill: {
-      col: Math.floor(width / 2),
-      row: ENTRANCE_ROW,
+      col: startCol,
+      row: startRow,
       mode: 'idle',
       target: null,
       path: [],
@@ -203,7 +235,7 @@ export function createShift(balance: Balance, seed: number): ShiftState {
     banked: 0,
     crystals: 0,
     mined: 0,
-    deepestRow: ENTRANCE_ROW,
+    deepestRow: startRow,
     rngState: normalizeSeed(seed),
   };
 }
@@ -319,10 +351,14 @@ export function aimDrill(state: ShiftState, col: number, row: number): boolean {
   return true;
 }
 
-/** Call the elevator: the drill drives up through the tunnel and hands the cargo over. */
+/**
+ * Call the elevator: the drill drives up through the tunnel and hands the cargo
+ * over. False with a conveyor: there is never anything in the cargo to bring up,
+ * so the trip would only cost the player time.
+ */
 export function callElevator(state: ShiftState): boolean {
   const { drill } = state;
-  if (state.phase === 'finished' || drill.mode === 'banking') {
+  if (state.phase === 'finished' || drill.mode === 'banking' || state.autoBank) {
     return false;
   }
   beginAscent(state);
@@ -432,10 +468,21 @@ function resolveOnce(state: ShiftState): boolean {
 
   if (state.phase === 'running' && state.timeLeftSec <= EPS) {
     state.timeLeftSec = 0;
-    state.phase = 'ending';
     state.endReason = 'timer';
     // Enemies leave with the wave that sent them: the ascent is not a fight.
     clearEnemies(state.defense);
+    // With a conveyor there is nothing to carry up: the shift is simply over.
+    if (state.autoBank) {
+      state.phase = 'finished';
+      drill.mode = 'idle';
+      drill.target = null;
+      drill.path = [];
+      drill.digElapsedSec = 0;
+      drill.digTotalSec = 0;
+      drill.bankElapsedSec = 0;
+      return true;
+    }
+    state.phase = 'ending';
     if (drill.mode !== 'banking') {
       beginAscent(state);
     }
@@ -581,7 +628,9 @@ function arrive(state: ShiftState): void {
 
   // Full cargo stops the drill in the tunnel: it never starts a cell whose
   // scrap would not fit, so nothing mined is ever thrown away (PLAN_V1 §4).
-  if (cellYield(state.balance.layers, target.row) > cargoFree(state) + EPS) {
+  // The conveyor hands every cell over where it is dug, so the cargo cannot
+  // fill up and the drill has nothing to wait for.
+  if (!state.autoBank && cellYield(state.balance.layers, target.row) > cargoFree(state) + EPS) {
     drill.mode = 'blocked';
     return;
   }
@@ -601,7 +650,13 @@ function completeDig(state: ShiftState): void {
 
   state.cells[target.row * state.width + target.col] = 'dug';
   const scrap = cellYield(state.balance.layers, target.row);
-  state.cargo += scrap;
+  // The conveyor hands the scrap over where it was dug: the cargo stays empty,
+  // so it never fills up and a breach can no longer take anything away.
+  if (state.autoBank) {
+    state.banked += scrap;
+  } else {
+    state.cargo += scrap;
+  }
   state.mined += scrap;
   if (target.row > state.deepestRow) {
     state.deepestRow = target.row;

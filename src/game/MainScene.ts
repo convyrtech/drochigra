@@ -2,6 +2,13 @@ import Phaser from 'phaser';
 import type { Balance } from '../sim/balance.js';
 import { layerIndexForRow } from '../sim/mining.js';
 import {
+  applyShiftResult,
+  buyUpgrade,
+  effectiveBalance,
+  hasConveyor,
+  type Profile,
+} from '../sim/progress.js';
+import {
   aimDrill,
   aimTurret,
   callElevator,
@@ -15,10 +22,12 @@ import {
   step,
   type ShiftState,
 } from '../sim/shift.js';
+import { createBaseScreen, type BaseScreen } from '../ui/baseScreen.js';
 import { createHud, type Hud } from '../ui/hud.js';
 import { createShiftReport } from '../ui/shiftReport.js';
 import { createDomeView, type DomeView } from './domeView.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from './layout.js';
+import { loadProfile, saveProfile } from './saveStorage.js';
 
 /** Depth order of the drawn parts. */
 const LAYER_DEPTH = {
@@ -31,16 +40,25 @@ const LAYER_DEPTH = {
   dome: 11,
   alarm: 12,
   report: 20,
+  base: 30,
 } as const;
 
 /**
- * Draws one shift and feeds taps into it. Everything that decides anything
- * lives in src/sim: this scene only reads the state and paints it.
+ * The loop of the game: base → shift → report → base. The base screen and the
+ * report are views over the profile (src/sim/progress.ts); the shift itself is
+ * a state machine in src/sim. This scene only paints what it finds and feeds
+ * taps back in.
+ *
+ * The profile lives on the scene and is written to storage after every purchase
+ * and every shift, so a scene restart never costs the player what was bought.
  */
 export class MainScene extends Phaser.Scene {
   private readonly balance: Balance;
 
-  private state!: ShiftState;
+  /** Loaded once, then kept across restarts of the scene. */
+  private profile: Profile | null = null;
+
+  private state: ShiftState | null = null;
   private cellRects: Phaser.GameObjects.Rectangle[] = [];
   /** What each cell currently shows; null until it is painted the first time. */
   private cellPainted: (boolean | null)[] = [];
@@ -52,6 +70,7 @@ export class MainScene extends Phaser.Scene {
   private drill!: Phaser.GameObjects.Rectangle;
   private hud!: Hud;
   private domeView!: DomeView;
+  private baseScreen: BaseScreen | null = null;
   private reportShown = false;
 
   constructor(balance: Balance) {
@@ -60,12 +79,87 @@ export class MainScene extends Phaser.Scene {
   }
 
   create(): void {
-    const { width, height } = this.scale.gameSize;
+    const { height } = this.scale.gameSize;
     this.domeHeight = height * VIEW.domeHeightShare;
+    this.state = null;
+    this.cellRects = [];
+    this.cellPainted = [];
+    this.reportShown = false;
 
-    // The seed comes from outside the simulation: src/sim never reads a clock.
-    this.state = createShift(this.balance, Date.now());
-    this.cellSize = width / this.state.width;
+    // localStorage is the view's business, never the simulation's.
+    this.profile ??= loadProfile(this.balance);
+    this.showBase();
+  }
+
+  override update(_time: number, deltaMs: number): void {
+    const state = this.state;
+    if (!state) {
+      return;
+    }
+    step(state, deltaMs / 1000);
+    this.paintCells();
+    this.paintDrill();
+    this.followDrill();
+    this.hud.update(state);
+    this.domeView.update(state);
+
+    if (state.phase === 'finished' && !this.reportShown) {
+      this.showReport();
+    }
+  }
+
+  /** The base between shifts: the wallet, the upgrades and the depth to start at. */
+  private showBase(): void {
+    const { width, height } = this.scale.gameSize;
+    const profile = this.currentProfile();
+    this.cameras.main.setScroll(0, 0);
+    this.baseScreen = createBaseScreen(this, {
+      width,
+      height,
+      depth: LAYER_DEPTH.base,
+      balance: this.balance,
+      profile,
+      onBuy: (upgradeId) => {
+        this.buy(upgradeId);
+      },
+      onStartShift: (startRow) => {
+        // Next tick on purpose: this runs inside the button's own pointer event,
+        // and the shift registers a screen-wide tap handler that would otherwise
+        // catch the very same tap and aim the drill at it.
+        this.time.delayedCall(0, () => {
+          this.startShift(startRow);
+        });
+      },
+    });
+  }
+
+  private buy(upgradeId: string): void {
+    const bought = buyUpgrade(this.balance, this.currentProfile(), upgradeId);
+    if (!bought) {
+      return;
+    }
+    this.profile = bought;
+    saveProfile(bought);
+    this.baseScreen?.update(bought);
+  }
+
+  /**
+   * Starts a shift on the balance the upgrades bend, from the checkpoint the
+   * player picked. The seed comes from outside: src/sim never reads a clock.
+   */
+  private startShift(startRow: number): void {
+    const { width, height } = this.scale.gameSize;
+    const profile = this.currentProfile();
+
+    this.baseScreen?.destroy();
+    this.baseScreen = null;
+
+    const state = createShift(effectiveBalance(this.balance, profile.upgrades), Date.now(), {
+      startRow,
+      autoBank: hasConveyor(profile),
+    });
+    this.state = state;
+    this.cellSize = width / state.width;
     this.cellRects = [];
     this.cellPainted = [];
     this.reportShown = false;
@@ -76,10 +170,10 @@ export class MainScene extends Phaser.Scene {
       domeHeight: this.domeHeight,
       depth: LAYER_DEPTH.hud,
       onBank: () => {
-        callElevator(this.state);
+        callElevator(state);
       },
       onSalvo: () => {
-        fireSalvo(this.state);
+        fireSalvo(state);
       },
     });
     this.domeView = createDomeView(this, {
@@ -91,29 +185,25 @@ export class MainScene extends Phaser.Scene {
 
     this.input.on(Phaser.Input.Events.POINTER_DOWN, this.onTap, this);
     this.followDrill();
-    this.hud.update(this.state);
-    this.domeView.update(this.state);
+    this.hud.update(state);
+    this.domeView.update(state);
   }
 
-  override update(_time: number, deltaMs: number): void {
-    step(this.state, deltaMs / 1000);
-    this.paintCells();
-    this.paintDrill();
-    this.followDrill();
-    this.hud.update(this.state);
-    this.domeView.update(this.state);
-
-    if (this.state.phase === 'finished' && !this.reportShown) {
-      this.showReport();
-    }
+  private currentProfile(): Profile {
+    this.profile ??= loadProfile(this.balance);
+    return this.profile;
   }
 
   /** One rectangle per cell plus the surface label; colours change later. */
   private drawShaft(): void {
+    const state = this.state;
+    if (!state) {
+      return;
+    }
     const size = this.cellSize;
     const gap = VIEW.cellGap;
-    for (let row = 0; row < this.state.rowCount; row += 1) {
-      for (let col = 0; col < this.state.width; col += 1) {
+    for (let row = 0; row < state.rowCount; row += 1) {
+      for (let col = 0; col < state.width; col += 1) {
         const rect = this.add
           .rectangle(col * size + gap / 2, row * size + gap / 2, size - gap, size - gap, COLORS.dug)
           .setOrigin(0, 0)
@@ -126,7 +216,7 @@ export class MainScene extends Phaser.Scene {
 
     this.add
       .text(
-        (this.state.width * size) / 2,
+        (state.width * size) / 2,
         ENTRANCE_ROW * size + size * VIEW.surfaceLabelYShare,
         'ЛИФТ · ПОВЕРХНОСТЬ',
         {
@@ -160,11 +250,15 @@ export class MainScene extends Phaser.Scene {
 
   /** Repaints only the cells that changed since the last frame. */
   private paintCells(): void {
-    for (let row = 0; row < this.state.rowCount; row += 1) {
+    const state = this.state;
+    if (!state) {
+      return;
+    }
+    for (let row = 0; row < state.rowCount; row += 1) {
       const rockColor = this.rockColor(row);
-      for (let col = 0; col < this.state.width; col += 1) {
-        const index = row * this.state.width + col;
-        const dug = cellAt(this.state, col, row) === 'dug';
+      for (let col = 0; col < state.width; col += 1) {
+        const index = row * state.width + col;
+        const dug = cellAt(state, col, row) === 'dug';
         if (this.cellPainted[index] === dug) {
           continue;
         }
@@ -190,11 +284,15 @@ export class MainScene extends Phaser.Scene {
   }
 
   private paintDrill(): void {
+    const state = this.state;
+    if (!state) {
+      return;
+    }
     const size = this.cellSize;
-    const { drill } = this.state;
+    const { drill } = state;
     const target = drill.target;
     this.drill.setPosition((drill.col + 0.5) * size, (drill.row + 0.5) * size);
-    this.drill.fillColor = isCargoBlocked(this.state) ? COLORS.drillStuck : COLORS.drill;
+    this.drill.fillColor = isCargoBlocked(state) ? COLORS.drillStuck : COLORS.drill;
 
     const digging = target?.kind === 'cell';
     this.target.setVisible(digging);
@@ -208,29 +306,34 @@ export class MainScene extends Phaser.Scene {
       target.col * size + gap / 2,
       (target.row + 1) * size - gap / 2 - size * VIEW.digBarHeightShare,
     );
-    this.progress.width = (size - gap) * digProgress(this.state);
+    this.progress.width = (size - gap) * digProgress(state);
   }
 
   /** Camera keeps the drill in the middle of the shaft zone, below the dome. */
   private followDrill(): void {
+    const state = this.state;
+    if (!state) {
+      return;
+    }
     const { height } = this.scale.gameSize;
     const shaftHeight = height - this.domeHeight;
-    const drillY = (this.state.drill.row + 0.5) * this.cellSize;
-    const worldHeight = this.state.rowCount * this.cellSize;
+    const drillY = (state.drill.row + 0.5) * this.cellSize;
+    const worldHeight = state.rowCount * this.cellSize;
     const wanted = drillY - (this.domeHeight + shaftHeight / 2);
     const maxScroll = Math.max(-this.domeHeight, worldHeight - height);
     this.cameras.main.setScroll(0, Phaser.Math.Clamp(wanted, -this.domeHeight, maxScroll));
   }
 
   private onTap(pointer: Phaser.Input.Pointer): void {
-    if (this.state.phase === 'finished') {
+    const state = this.state;
+    if (!state || state.phase === 'finished') {
       return;
     }
     // Up in the dome zone a tap is an order for the turret, not for the drill.
     if (pointer.y < this.domeHeight) {
       const enemyId = this.domeView.pickEnemy(pointer.x, pointer.y);
       if (enemyId !== null) {
-        aimTurret(this.state, enemyId);
+        aimTurret(state, enemyId);
       }
       return;
     }
@@ -238,21 +341,38 @@ export class MainScene extends Phaser.Scene {
     const col = Math.floor((pointer.x + this.cameras.main.scrollX) / this.cellSize);
     const row = Math.floor(worldY / this.cellSize);
     if (row === ENTRANCE_ROW) {
-      callElevator(this.state);
+      callElevator(state);
       return;
     }
-    aimDrill(this.state, col, row);
+    aimDrill(state, col, row);
   }
 
+  /**
+   * The shift is over: fold it into the profile, save, and show what it brought.
+   * The button leads back to the base, where the earnings are spent.
+   */
   private showReport(): void {
+    const state = this.state;
+    if (!state) {
+      return;
+    }
     const { width, height } = this.scale.gameSize;
     this.reportShown = true;
-    createShiftReport(this, shiftReport(this.state), {
+
+    const report = shiftReport(state);
+    const outcome = applyShiftResult(this.balance, this.currentProfile(), report);
+    this.profile = outcome.profile;
+    saveProfile(outcome.profile);
+
+    createShiftReport(this, report, {
       width,
       height,
       depth: LAYER_DEPTH.report,
       maxDepthRow: this.balance.shift.grid_depth,
-      onNewShift: () => {
+      outcome,
+      // A restart wipes the shaft of the finished shift; the profile is a field
+      // of the scene and survives it, and it is on disk either way.
+      onBack: () => {
         this.scene.restart();
       },
     });

@@ -107,6 +107,8 @@ export interface AdsBalance {
 }
 
 export interface Balance {
+  /** Every currency of the game, keyed by id. The wallet is a map over these. */
+  readonly resources: Readonly<Record<string, ResourceBalance>>;
   readonly shift: ShiftBalance;
   readonly dome: DomeBalance;
   readonly turret: TurretBalance;

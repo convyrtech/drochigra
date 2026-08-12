@@ -76,13 +76,45 @@ export const VIEW = {
 
   report: {
     panelWidth: 600,
-    panelHeight: 740,
+    panelHeight: 980,
     titleTop: 60,
-    linesTop: 190,
-    lineHeight: 58,
+    linesTop: 150,
+    lineHeight: 52,
     buttonWidth: 360,
     buttonHeight: 104,
     buttonBottom: 60,
+  },
+
+  /**
+   * The base screen between shifts. One row per upgrade branch, one chip per
+   * elevator checkpoint, no scrolling and no gestures (PLAN_V1 §3), so the rows
+   * are compact: two lines of text on the left, the price button on the right.
+   */
+  base: {
+    margin: 24,
+    /** Header band holding the title, the wallet and the plan. */
+    headerHeight: 160,
+    titleY: 20,
+    walletY: 80,
+    planY: 126,
+    /** Top of the upgrade list. Everything below it is measured from the rows. */
+    listTop: 168,
+    rowHeight: 86,
+    rowGap: 6,
+    rowPad: 18,
+    /** Text baselines inside a row, from its top. */
+    rowNameY: 12,
+    rowEffectY: 48,
+    buyWidth: 210,
+    buyHeight: 62,
+    /** Gap between the upgrade list and the depth picker. */
+    sectionGap: 12,
+    sectionTitleHeight: 38,
+    chipHeight: 74,
+    chipGap: 6,
+    /** The start button is pinned to the bottom of the screen. */
+    startHeight: 116,
+    startBottom: 84,
   },
 
   font: {
@@ -90,6 +122,7 @@ export const VIEW = {
     large: '44px',
     medium: '32px',
     small: '26px',
+    tiny: '22px',
   },
 } as const;
 

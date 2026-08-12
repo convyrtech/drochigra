@@ -1,10 +1,13 @@
 import Phaser from 'phaser';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
+import type { ShiftOutcome } from '../sim/progress.js';
 import type { ShiftReport } from '../sim/shift.js';
 
 /**
- * End of shift screen: what the shift produced and one button to start a new
- * one. Deliberately plain — there is no saving between shifts yet.
+ * End of shift screen: what the shift produced, what it did to the profile, and
+ * one button back to the base (src/ui/baseScreen.ts), where the earnings are
+ * spent. Everything shown here is already saved — the plan, the premium and the
+ * new checkpoints come from the ShiftOutcome the base wrote to the profile.
  *
  * Every part is pinned to the screen with scrollFactor 0, the same way the HUD
  * is: that keeps the button's hit area under the button while the shaft is
@@ -15,7 +18,9 @@ export interface ShiftReportOptions {
   readonly height: number;
   readonly depth: number;
   readonly maxDepthRow: number;
-  readonly onNewShift: () => void;
+  /** What the shift added to the profile. Already applied and saved. */
+  readonly outcome: ShiftOutcome;
+  readonly onBack: () => void;
 }
 
 export function createShiftReport(
@@ -23,7 +28,7 @@ export function createShiftReport(
   report: ShiftReport,
   options: ShiftReportOptions,
 ): void {
-  const { width, height, depth, maxDepthRow, onNewShift } = options;
+  const { width, height, depth, maxDepthRow, outcome, onBack } = options;
   const { report: box, font } = VIEW;
 
   const shade = scene.add.rectangle(0, 0, width, height, COLORS.shaft, 0.86).setOrigin(0, 0);
@@ -44,6 +49,11 @@ export function createShiftReport(
     })
     .setOrigin(0.5, 0);
 
+  // The plan is a share of the best shift so far (PLAN_V1 §4), so the percent is
+  // what the player reads to see whether the premium was earned.
+  const quotaPercent = Math.round((outcome.quota > 0 ? report.banked / outcome.quota : 1) * 100);
+  const planMet = report.banked >= outcome.quota;
+
   const lines: readonly (readonly [string, number])[] = [
     [`Добыто лома: ${report.mined}`, COLORS.scrap],
     [`Сдано лома: ${report.banked}`, COLORS.scrap],
@@ -51,8 +61,25 @@ export function createShiftReport(
     ...(breach
       ? ([[`Потеряно в карго: ${report.mined - report.banked}`, COLORS.warning]] as const)
       : []),
+    [
+      `План ${outcome.quota} — выполнен на ${quotaPercent}%`,
+      planMet ? COLORS.buttonEdge : COLORS.textDim,
+    ],
+    ...(outcome.bonusScrap > 0
+      ? ([[`Премия за план: +${outcome.bonusScrap}`, COLORS.scrap]] as const)
+      : []),
+    [`Зачислено лома: ${outcome.scrapEarned}`, COLORS.scrap],
+    ...(outcome.record ? ([['Новый рекорд смены', COLORS.buttonEdge]] as const) : []),
     [`Глубина: ${report.deepestRow} из ${maxDepthRow}`, COLORS.text],
-    [`Кристаллы: ${report.crystals}`, COLORS.crystal],
+    ...(outcome.newCheckpoints > 0
+      ? ([
+          [
+            `Новых чекпоинтов: ${outcome.newCheckpoints} (+${outcome.checkpointCrystals} кристаллов)`,
+            COLORS.crystal,
+          ],
+        ] as const)
+      : []),
+    [`Кристаллы: ${outcome.crystalsEarned}`, COLORS.crystal],
     [`Волн пришло: ${report.waves}`, COLORS.textDim],
   ];
   const lineObjects = lines.map(([text, color], index) =>
@@ -72,10 +99,10 @@ export function createShiftReport(
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.buttonEdge)
     .setInteractive({ useHandCursor: true });
-  button.on(Phaser.Input.Events.POINTER_DOWN, onNewShift);
+  button.on(Phaser.Input.Events.POINTER_DOWN, onBack);
 
   const buttonText = scene.add
-    .text(buttonX + box.buttonWidth / 2, buttonY + box.buttonHeight / 2, 'Новая смена', {
+    .text(buttonX + box.buttonWidth / 2, buttonY + box.buttonHeight / 2, 'НА БАЗУ', {
       fontFamily: FONT_FAMILY,
       fontSize: font.medium,
       color: cssColor(COLORS.text),

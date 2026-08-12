@@ -35,6 +35,7 @@ function balanceWith(patch: {
   bankSec?: number;
   firstWaveSec?: number;
   domeHp?: number;
+  enemyHpBase?: number;
 }): Balance {
   return {
     ...balance,
@@ -54,6 +55,7 @@ function balanceWith(patch: {
     waves: {
       ...balance.waves,
       first_wave_sec: patch.firstWaveSec ?? balance.waves.first_wave_sec,
+      enemy_hp_base: patch.enemyHpBase ?? balance.waves.enemy_hp_base,
     },
   };
 }
@@ -689,5 +691,244 @@ describe('step guards', () => {
     step(state, 0);
     expect(state.timeLeftSec).toBe(balance.shift.duration_sec);
     expect(state.drill.mode).toBe('idle');
+  });
+});
+
+describe('the elevator drops the drill at a checkpoint', () => {
+  /** Row the elevator drops at in these tests: an open checkpoint of the mine. */
+  const DROP_ROW = balance.shift.checkpoint_every_rows;
+
+  it('digs the shaft down to the drop row and leaves the rest as rock', () => {
+    const state = createShift(balance, 1, { startRow: DROP_ROW });
+    for (let row = ENTRANCE_ROW; row <= DROP_ROW; row += 1) {
+      expect(cellAt(state, START_COL, row)).toBe('dug');
+    }
+    expect(cellAt(state, START_COL, DROP_ROW + 1)).toBe('rock');
+    for (let col = 0; col < state.width; col += 1) {
+      // Only the shaft is open below the entrance: the rest is untouched rock.
+      expect(cellAt(state, col, ENTRANCE_ROW)).toBe('dug');
+      if (col !== START_COL) {
+        expect(cellAt(state, col, DROP_ROW)).toBe('rock');
+      }
+    }
+  });
+
+  it('parks the drill on the drop row with the depth already counted', () => {
+    const state = createShift(balance, 1, { startRow: DROP_ROW });
+    expect(state.startRow).toBe(DROP_ROW);
+    expect(state.drill.row).toBe(DROP_ROW);
+    expect(state.drill.col).toBe(START_COL);
+    expect(state.drill.mode).toBe('idle');
+    expect(state.deepestRow).toBe(DROP_ROW);
+    expect(state.phase).toBe('running');
+  });
+
+  it('brings no scrap and no crystals for the cells of the shaft', () => {
+    const state = createShift(balance, 1, { startRow: balance.shift.grid_depth });
+    expect(state.cargo).toBe(0);
+    expect(state.banked).toBe(0);
+    expect(state.mined).toBe(0);
+    expect(state.crystals).toBe(0);
+  });
+
+  it('starts on the surface when the setup says nothing', () => {
+    const plain = createShift(balance, 1);
+    expect(plain.startRow).toBe(ENTRANCE_ROW);
+    expect(plain.deepestRow).toBe(ENTRANCE_ROW);
+    expect(createShift(balance, 1, {}).startRow).toBe(ENTRANCE_ROW);
+    expect(cellAt(plain, START_COL, ENTRANCE_ROW + 1)).toBe('rock');
+  });
+
+  it('refuses a drop row that is not a row of the grid', () => {
+    for (const startRow of [-1, balance.shift.grid_depth + 1, 1.5, Number.NaN]) {
+      expect(() => createShift(balance, 1, { startRow })).toThrow(RangeError);
+    }
+    // The bottom row is still a row: the deepest checkpoint is a valid drop.
+    expect(() => createShift(balance, 1, { startRow: balance.shift.grid_depth })).not.toThrow();
+  });
+
+  it('digs on downwards from the drop row', () => {
+    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1, { startRow: DROP_ROW });
+    expect(aimDrill(state, START_COL, DROP_ROW + 1)).toBe(true);
+
+    step(state, PER_CELL_SEC * 2);
+    expect(isDug(state, START_COL, DROP_ROW + 1)).toBe(true);
+    expect(isDug(state, START_COL, DROP_ROW + 2)).toBe(true);
+    expect(state.deepestRow).toBe(DROP_ROW + 2);
+    expect(state.cargo).toBe(layerYield(0) * 2);
+  });
+
+  it('rides the shaft back up and hands the cargo over', () => {
+    const state = createShift(balance, 1, { startRow: DROP_ROW });
+    digCell(state, START_COL, DROP_ROW + 1);
+    const carried = state.cargo;
+    expect(carried).toBe(layerYield(0));
+
+    // The road home is the whole shaft: the drill is one row below the drop.
+    const road = timeToBank(state);
+    expect(road).toBeCloseTo(travelSec(DROP_ROW + 1), 2);
+    expect(state.drill.row).toBe(ENTRANCE_ROW);
+
+    step(state, balance.shift.elevator_bank_sec + 0.01);
+    expect(state.banked).toBe(carried);
+    expect(state.cargo).toBe(0);
+    expect(state.drill.mode).toBe('idle');
+  });
+
+  it('ascends the shaft on the timer with everything mined', () => {
+    const state = createShift(
+      balanceWith({ cargoCapacity: layerYield(0), firstWaveSec: QUIET_WAVES }),
+      1,
+      { startRow: DROP_ROW },
+    );
+    digCell(state, START_COL, DROP_ROW + 1);
+    const carried = state.cargo;
+
+    runTimerOut(state);
+    expect(state.phase).toBe('ending');
+    step(state, travelSec(DROP_ROW + 1) + balance.shift.elevator_bank_sec + 0.01);
+    expect(state.phase).toBe('finished');
+    expect(state.endReason).toBe('timer');
+    expect(state.banked).toBe(carried);
+
+    const report = shiftReport(state);
+    expect(report.deepestRow).toBe(DROP_ROW + 1);
+    expect(report.mined).toBe(carried);
+  });
+});
+
+describe('the conveyor hands the scrap over by itself', () => {
+  /** Enemies too tough for the turret: the test is about the dome, not the aim. */
+  const UNKILLABLE = 1e6;
+
+  /** Dome damage of the enemy the first layer sends. */
+  const ABERRATION_DAMAGE = balance.enemies['aberration']?.dome_damage ?? 0;
+
+  it('banks every dug cell at once and leaves the cargo empty', () => {
+    const state = createShift(balanceWith({ firstWaveSec: QUIET_WAVES }), 1, { autoBank: true });
+    expect(state.autoBank).toBe(true);
+    expect(aimDrill(state, START_COL, 1)).toBe(true);
+
+    step(state, PER_CELL_SEC * 3);
+    expect(state.banked).toBe(layerYield(0) * 3);
+    expect(state.cargo).toBe(0);
+    expect(state.mined).toBe(state.banked);
+    expect(isDug(state, START_COL, 3)).toBe(true);
+  });
+
+  it('never stops the drill on a full cargo, however small the cargo is', () => {
+    // One cell of the first layer is the whole backpack: without the conveyor
+    // the drill would stand still after the very first cell.
+    const state = createShift(
+      balanceWith({ cargoCapacity: layerYield(0), durationSec: 1e6, firstWaveSec: QUIET_WAVES }),
+      1,
+      { autoBank: true },
+    );
+    expect(aimDrill(state, START_COL, 1)).toBe(true);
+
+    for (let guard = 0; guard < 400; guard += 1) {
+      step(state, 0.25);
+      expect(isCargoBlocked(state)).toBe(false);
+      expect(state.cargo).toBe(0);
+    }
+    expect(state.deepestRow).toBe(balance.shift.grid_depth);
+    expect(state.banked).toBe(state.mined);
+    expect(state.banked).toBeGreaterThan(cargoCapacity(state));
+  });
+
+  it('refuses the elevator: there is never anything to carry up', () => {
+    const state = createShift(balanceWith({ firstWaveSec: QUIET_WAVES }), 1, { autoBank: true });
+    digCell(state, START_COL, 1);
+    expect(state.banked).toBe(layerYield(0));
+
+    expect(callElevator(state)).toBe(false);
+    expect(state.drill.mode).not.toBe('banking');
+    expect(state.drill.row).toBe(1);
+
+    // The drill goes on taking dig orders where it stands.
+    expect(aimDrill(state, START_COL, 2)).toBe(true);
+  });
+
+  it('ends the shift on the timer at once, without the road home', () => {
+    const state = createShift(
+      balanceWith({ cargoCapacity: 1e6, firstWaveSec: QUIET_WAVES }),
+      1,
+      { autoBank: true },
+    );
+    // Dug to the left wall, so the drill is standing still with a known load.
+    digCell(state, START_COL, 1);
+    expect(aimDrill(state, START_COL - 1, 1)).toBe(true);
+    step(state, PER_CELL_SEC * (START_COL + 1));
+    expect(state.drill.mode).toBe('idle');
+    const banked = state.banked;
+    expect(banked).toBe(layerYield(0) * (START_COL + 1));
+    const deepRow = state.deepestRow;
+
+    runTimerOut(state);
+    expect(state.phase).toBe('finished');
+    expect(state.endReason).toBe('timer');
+    expect(state.drill.mode).toBe('idle');
+    expect(state.drill.target).toBeNull();
+    expect(state.drill.path).toEqual([]);
+    // No trip up, no hand-over time: the shift is simply over.
+    expect(state.drill.row).toBe(1);
+    expect(state.banked).toBe(banked);
+    expect(state.cargo).toBe(0);
+
+    const report = shiftReport(state);
+    expect(report.banked).toBe(banked);
+    expect(report.mined).toBe(banked);
+    expect(report.deepestRow).toBe(deepRow);
+
+    // Nothing is left to resolve: a finished shift takes no more orders.
+    step(state, 60);
+    expect(aimDrill(state, START_COL, deepRow + 1)).toBe(false);
+    expect(callElevator(state)).toBe(false);
+    expect(state.banked).toBe(banked);
+  });
+
+  it('loses nothing when the dome falls: there was nothing in the cargo', () => {
+    const state = createShift(
+      balanceWith({
+        domeHp: ABERRATION_DAMAGE,
+        firstWaveSec: 1,
+        enemyHpBase: UNKILLABLE,
+        cargoCapacity: 1e6,
+      }),
+      1,
+      { autoBank: true },
+    );
+    expect(aimDrill(state, START_COL, 1)).toBe(true);
+    step(state, 10);
+    const banked = state.banked;
+    expect(banked).toBeGreaterThan(0);
+
+    // The first arrival takes the dome down: an emergency ascent right now.
+    step(state, 1 + balance.waves.enemy_travel_sec);
+    expect(state.phase).toBe('finished');
+    expect(state.endReason).toBe('breach');
+    expect(state.cargo).toBe(0);
+    // Everything dug up to the breach is already handed over (PLAN_V1 §2.1).
+    expect(state.banked).toBeGreaterThanOrEqual(banked);
+    expect(state.banked).toBe(state.mined);
+
+    const report = shiftReport(state);
+    expect(report.mined - report.banked).toBe(0);
+  });
+
+  it('digs from a checkpoint with the conveyor on and still never ascends', () => {
+    const dropRow = balance.shift.checkpoint_every_rows;
+    const state = createShift(balanceWith({ firstWaveSec: QUIET_WAVES }), 1, {
+      startRow: dropRow,
+      autoBank: true,
+    });
+    expect(state.startRow).toBe(dropRow);
+    expect(state.autoBank).toBe(true);
+
+    digCell(state, START_COL, dropRow + 1);
+    expect(state.banked).toBe(layerYield(0));
+    expect(state.cargo).toBe(0);
+    expect(callElevator(state)).toBe(false);
+    expect(state.drill.row).toBe(dropRow + 1);
   });
 });
