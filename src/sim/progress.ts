@@ -13,7 +13,21 @@ import { ENTRANCE_ROW, type ShiftReport } from './shift.js';
  */
 
 /** Schema version of the saved profile. Not a game number. */
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
+
+/**
+ * Older schema versions this module still reads and migrates forward. A format
+ * change must never cost the player what was already handed over (PLAN_V1 §2),
+ * so version 1 — the one without the hangar visit stamp — is taken as is.
+ */
+const MIGRATABLE_VERSIONS: readonly number[] = [1];
+
+/**
+ * Units, not game numbers: the hangar is paid per hour and the clock outside
+ * counts milliseconds. The numbers the hangar earns are in balance.offline.
+ */
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_HOUR = 3600;
 
 /** How much of each resource the player owns, keyed by resource id. */
 export type Wallet = Readonly<Record<string, number>>;
@@ -30,6 +44,12 @@ export interface Profile {
   readonly bestShiftScrap: number;
   /** Five-year plan number. Grows on victory (task #5); stored from now on. */
   readonly fiveYearPlan: number;
+  /**
+   * When the player was last seen, in milliseconds since the epoch. The hangar
+   * is paid for the stretch between this stamp and the next visit. src/sim never
+   * reads a clock, so the value always arrives from outside as a parameter.
+   */
+  readonly lastVisitMs: number;
 }
 
 /** The saved file: a profile plus the schema version it was written with. */
@@ -49,6 +69,7 @@ const CARGO_ID = 'cargo';
 const SALVO_ID = 'salvo';
 const ELEVATOR_ID = 'elevator';
 const CONVEYOR_ID = 'conveyor';
+const HANGAR_ID = 'hangar';
 
 /* ---------------------------------------------------------------- resources */
 
@@ -78,8 +99,13 @@ export function crystalId(balance: Balance): string {
 
 /* ------------------------------------------------------------------ profile */
 
-/** A fresh account: nothing bought, nothing earned, surface only. */
-export function createProfile(balance: Balance): Profile {
+/**
+ * A fresh account: nothing bought, nothing earned, surface only. `nowMs` is the
+ * moment the account is created, used as the first hangar stamp; it defaults to
+ * zero because a fresh account has no depth, and without depth the hangar pays
+ * nothing whatever the stamp says.
+ */
+export function createProfile(balance: Balance, nowMs = 0): Profile {
   const wallet: Record<string, number> = {};
   for (const id of resourceIds(balance)) {
     wallet[id] = 0;
@@ -94,6 +120,7 @@ export function createProfile(balance: Balance): Profile {
     deepestRow: ENTRANCE_ROW,
     bestShiftScrap: 0,
     fiveYearPlan: 1,
+    lastVisitMs: Math.max(0, Math.floor(nowMs)),
   };
 }
 
@@ -220,8 +247,8 @@ function added(base: number, step: number, level: number): number {
  * live in code.
  *
  * Two branches change no number here: the conveyor is a rule (`hasConveyor`,
- * fed to `createShift`), and the hangar only pays offline, which does not exist
- * yet — its level is stored and applied in task #5.
+ * fed to `createShift`), and the hangar pays offline only, which the shift never
+ * sees — `hangarHarvest` applies its level between shifts.
  */
 export function effectiveBalance(balance: Balance, upgrades: UpgradeLevels): Balance {
   const level = (id: string): number => clampLevel(balance, id, upgrades[id] ?? 0);
@@ -262,6 +289,88 @@ export function effectiveBalance(balance: Balance, upgrades: UpgradeLevels): Bal
 /** The conveyor: mined scrap goes straight to the bank, the drill never ascends. */
 export function hasConveyor(profile: Profile): boolean {
   return upgradeLevel(profile, CONVEYOR_ID) > 0;
+}
+
+/* ------------------------------------------------------------------- hangar */
+
+/**
+ * The hangar works while the game is closed (PLAN_V1 §7): it pays
+ * `offline.scrap_per_hour_per_depth` per hour for every row the player has
+ * personally reached, bent by the hangar branch, and it stops paying after
+ * `offline.cap_hours`.
+ *
+ * It pays scrap and nothing else, ever: crystals, depth and open layers are what
+ * a played shift is for (PLAN_V1 §2 rule 5). The clock lives outside src/sim, so
+ * every function here is handed the current moment as `nowMs`.
+ */
+export interface HangarHarvest {
+  /** Whole scrap waiting in the hangar. Zero when there is nothing to take. */
+  readonly scrap: number;
+  /** Hours the payment covers: the offline stretch cut down to `cap_hours`. */
+  readonly hours: number;
+  /** How full the hangar is, 0..1 — the bar on the base screen. */
+  readonly fillShare: number;
+}
+
+/** What one hour of offline work is worth to this profile. */
+export function hangarScrapPerHour(balance: Balance, profile: Profile): number {
+  const level = clampLevel(balance, HANGAR_ID, upgradeLevel(profile, HANGAR_ID));
+  const step = upgradeItem(balance, HANGAR_ID)?.step ?? 0;
+  const depth = Math.max(0, profile.deepestRow);
+  return scaled(balance.offline.scrap_per_hour_per_depth * depth, step, level);
+}
+
+/**
+ * Hours the hangar is paid for. A stretch longer than the ceiling pays the
+ * ceiling, and a clock moved backwards pays nothing instead of taking scrap away.
+ */
+function payableHours(balance: Balance, profile: Profile, nowMs: number): number {
+  const cap = Math.max(0, balance.offline.cap_hours);
+  const elapsedMs = nowMs - profile.lastVisitMs;
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+    return 0;
+  }
+  return Math.min(cap, elapsedMs / (MS_PER_SECOND * SECONDS_PER_HOUR));
+}
+
+/** What the hangar has waiting right now. Nothing is spent or moved by asking. */
+export function hangarHarvest(balance: Balance, profile: Profile, nowMs: number): HangarHarvest {
+  const cap = Math.max(0, balance.offline.cap_hours);
+  const hours = payableHours(balance, profile, nowMs);
+  return {
+    // Rounded down: the hangar never hands over a fraction of a scrap.
+    scrap: Math.floor(hangarScrapPerHour(balance, profile) * hours),
+    hours,
+    fillShare: cap > 0 ? Math.min(1, hours / cap) : 0,
+  };
+}
+
+/** Marks the player as seen now, so the hangar is not paid for time spent playing. */
+export function touchVisit(profile: Profile, nowMs: number): Profile {
+  const stamp = Number.isFinite(nowMs) ? Math.max(0, Math.floor(nowMs)) : profile.lastVisitMs;
+  return { ...profile, lastVisitMs: stamp };
+}
+
+/**
+ * Takes what the hangar made: the scrap goes into the wallet and the visit stamp
+ * moves to now, so the same hours are never paid twice. Only scrap is touched —
+ * the crystal count and the depth reached come out exactly as they went in.
+ */
+export function collectHangar(
+  balance: Balance,
+  profile: Profile,
+  nowMs: number,
+): { readonly profile: Profile; readonly harvest: HangarHarvest } {
+  const harvest = hangarHarvest(balance, profile, nowMs);
+  const scrap = scrapId(balance);
+  const collected = touchVisit(profile, nowMs);
+  return {
+    profile: {
+      ...collected,
+      wallet: { ...collected.wallet, [scrap]: walletAmount(collected, scrap) + harvest.scrap },
+    },
+    harvest,
+  };
 }
 
 /* -------------------------------------------------------------- checkpoints */
@@ -412,18 +521,24 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Reads a saved profile. Returns null when there is nothing usable — a foreign
- * version, a truncated file, something that is not an object at all — and the
- * caller starts a clean account. Anything readable is taken and clamped: an
- * unknown resource or branch is dropped, a broken number becomes zero. Never
- * throws, because a bad save must not cost the player the game.
+ * Reads a saved profile. Returns null when there is nothing usable — a version
+ * this build cannot read, a truncated file, something that is not an object at
+ * all — and the caller starts a clean account. Anything readable is taken and
+ * clamped: an unknown resource or branch is dropped, a broken number becomes
+ * zero. Never throws, because a bad save must not cost the player the game.
+ *
+ * Older schemas are migrated instead of thrown away (PLAN_V1 §2 rule 1): a
+ * version 1 save has everything but the hangar stamp, and the stamp it gets is
+ * `nowMs` — the player is treated as arriving right now, so the format change
+ * neither pays the hangar for the past nor takes anything away.
  */
-export function profileFromSaved(balance: Balance, raw: unknown): Profile | null {
+export function profileFromSaved(balance: Balance, raw: unknown, nowMs = 0): Profile | null {
   if (typeof raw !== 'object' || raw === null) {
     return null;
   }
   const source = raw as Record<string, unknown>;
-  if (readNumber(source, 'version', -1) !== SAVE_VERSION) {
+  const version = readNumber(source, 'version', -1);
+  if (version !== SAVE_VERSION && !MIGRATABLE_VERSIONS.includes(version)) {
     return null;
   }
 
@@ -444,11 +559,18 @@ export function profileFromSaved(balance: Balance, raw: unknown): Profile | null
     Math.max(ENTRANCE_ROW, Math.floor(readNumber(source, 'deepestRow', ENTRANCE_ROW))),
   );
 
+  // A save without a usable stamp — version 1, or a version 2 file with a broken
+  // or negative one — is stamped now: the hangar starts counting from this visit
+  // instead of paying for everything since the epoch.
+  const fallbackVisit = Math.max(0, Math.floor(Number.isFinite(nowMs) ? nowMs : 0));
+  const savedVisit = Math.floor(readNumber(source, 'lastVisitMs', fallbackVisit));
+
   return {
     wallet,
     upgrades,
     deepestRow,
     bestShiftScrap: Math.max(0, Math.floor(readNumber(source, 'bestShiftScrap', 0))),
     fiveYearPlan: Math.max(1, Math.floor(readNumber(source, 'fiveYearPlan', 1))),
+    lastVisitMs: savedVisit >= 0 ? savedVisit : fallbackVisit,
   };
 }

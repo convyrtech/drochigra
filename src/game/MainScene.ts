@@ -4,8 +4,12 @@ import { layerIndexForRow } from '../sim/mining.js';
 import {
   applyShiftResult,
   buyUpgrade,
+  collectHangar,
   effectiveBalance,
+  hangarHarvest,
   hasConveyor,
+  touchVisit,
+  type HangarHarvest,
   type Profile,
 } from '../sim/progress.js';
 import {
@@ -23,11 +27,12 @@ import {
   type ShiftState,
 } from '../sim/shift.js';
 import { createBaseScreen, type BaseScreen } from '../ui/baseScreen.js';
+import { createHangarScreen } from '../ui/hangarScreen.js';
 import { createHud, type Hud } from '../ui/hud.js';
 import { createShiftReport } from '../ui/shiftReport.js';
 import { createDomeView, type DomeView } from './domeView.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from './layout.js';
-import { loadProfile, saveProfile } from './saveStorage.js';
+import { browserStore, loadProfile, saveProfile } from './saveStorage.js';
 
 /** Depth order of the drawn parts. */
 const LAYER_DEPTH = {
@@ -41,6 +46,7 @@ const LAYER_DEPTH = {
   alarm: 12,
   report: 20,
   base: 30,
+  hangar: 40,
 } as const;
 
 /**
@@ -86,9 +92,17 @@ export class MainScene extends Phaser.Scene {
     this.cellPainted = [];
     this.reportShown = false;
 
-    // localStorage is the view's business, never the simulation's.
-    this.profile ??= loadProfile(this.balance);
-    this.showBase();
+    // localStorage and the clock are the view's business, never the simulation's.
+    this.profile ??= loadProfile(this.balance, browserStore(), Date.now());
+
+    // Coming back to a hangar with something in it: the collection screen first,
+    // the base right after it. An empty hangar says nothing.
+    const harvest = hangarHarvest(this.balance, this.currentProfile(), Date.now());
+    if (harvest.scrap > 0) {
+      this.showHangar(harvest);
+      return;
+    }
+    this.showBase(harvest);
   }
 
   override update(_time: number, deltaMs: number): void {
@@ -108,8 +122,32 @@ export class MainScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * The hangar screen of a returning player: the scrap is banked the moment the
+   * button is tapped, so nothing is lost if the page is closed mid-animation,
+   * and the visit stamp moves with it so the same hours are never paid twice.
+   */
+  private showHangar(harvest: HangarHarvest): void {
+    const { width, height } = this.scale.gameSize;
+    this.cameras.main.setScroll(0, 0);
+    createHangarScreen(this, {
+      width,
+      height,
+      depth: LAYER_DEPTH.hangar,
+      balance: this.balance,
+      harvest,
+      onCollect: () => {
+        const collected = collectHangar(this.balance, this.currentProfile(), Date.now());
+        this.profile = collected.profile;
+        saveProfile(collected.profile);
+        // Collected: the hangar starts filling again from empty.
+        this.showBase(hangarHarvest(this.balance, collected.profile, Date.now()));
+      },
+    });
+  }
+
   /** The base between shifts: the wallet, the upgrades and the depth to start at. */
-  private showBase(): void {
+  private showBase(harvest: HangarHarvest): void {
     const { width, height } = this.scale.gameSize;
     const profile = this.currentProfile();
     this.cameras.main.setScroll(0, 0);
@@ -119,6 +157,7 @@ export class MainScene extends Phaser.Scene {
       depth: LAYER_DEPTH.base,
       balance: this.balance,
       profile,
+      harvest,
       onBuy: (upgradeId) => {
         this.buy(upgradeId);
       },
@@ -149,7 +188,11 @@ export class MainScene extends Phaser.Scene {
    */
   private startShift(startRow: number): void {
     const { width, height } = this.scale.gameSize;
-    const profile = this.currentProfile();
+    // Going down stamps the visit: the hangar must not pay for the time the
+    // player spends in the mine.
+    const profile = touchVisit(this.currentProfile(), Date.now());
+    this.profile = profile;
+    saveProfile(profile);
 
     this.baseScreen?.destroy();
     this.baseScreen = null;
@@ -190,7 +233,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   private currentProfile(): Profile {
-    this.profile ??= loadProfile(this.balance);
+    this.profile ??= loadProfile(this.balance, browserStore(), Date.now());
     return this.profile;
   }
 
@@ -361,8 +404,11 @@ export class MainScene extends Phaser.Scene {
 
     const report = shiftReport(state);
     const outcome = applyShiftResult(this.balance, this.currentProfile(), report);
-    this.profile = outcome.profile;
-    saveProfile(outcome.profile);
+    // The shift itself is time spent in the game, not in the hangar: the stamp
+    // moves to now, so the six minutes underground are never paid for offline.
+    const saved = touchVisit(outcome.profile, Date.now());
+    this.profile = saved;
+    saveProfile(saved);
 
     createShiftReport(this, report, {
       width,

@@ -29,19 +29,29 @@ export function browserStore(): KeyValueStore | null {
   }
 }
 
-/** The saved profile, or a fresh account when there is nothing readable. */
-export function loadProfile(balance: Balance, store: KeyValueStore | null = browserStore()): Profile {
+/**
+ * The saved profile, or a fresh account when there is nothing readable. `nowMs`
+ * is the moment the player arrived: a save written before the hangar existed has
+ * no visit stamp, and it gets this one (src/sim/progress.ts does the migration).
+ * It defaults to the epoch so a caller without a clock still works; the game
+ * passes `Date.now()`.
+ */
+export function loadProfile(
+  balance: Balance,
+  store: KeyValueStore | null = browserStore(),
+  nowMs = 0,
+): Profile {
   const raw = readRaw(store);
   if (raw === null) {
-    return createProfile(balance);
+    return createProfile(balance, nowMs);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return createProfile(balance);
+    return createProfile(balance, nowMs);
   }
-  return profileFromSaved(balance, parsed) ?? createProfile(balance);
+  return profileFromSaved(balance, parsed, nowMs) ?? createProfile(balance, nowMs);
 }
 
 /** Writes the profile. False when storage refused it — the game goes on either way. */

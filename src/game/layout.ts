@@ -74,12 +74,27 @@ export const VIEW = {
     framePulseSec: 1.1,
   },
 
+  /**
+   * The end-of-shift report, laid out as the paper form the station would file:
+   * a header band with the form code, the plan percent as the headline, then one
+   * ruled line per figure — label on the left, number on the right.
+   */
   report: {
     panelWidth: 600,
     panelHeight: 980,
-    titleTop: 60,
-    linesTop: 150,
-    lineHeight: 52,
+    pad: 28,
+    headerHeight: 104,
+    titleTop: 18,
+    formCodeTop: 62,
+    /** «ПЛАН ВЫПОЛНЕН НА N%» — the line the whole form is about. */
+    percentTop: 124,
+    stampTop: 178,
+    rowsTop: 224,
+    rowHeight: 50,
+    /** The ruled line under every row of the form. */
+    ruleHeight: 1,
+    /** Signature line above the button, measured from the panel bottom. */
+    signatureBottom: 196,
     buttonWidth: 360,
     buttonHeight: 104,
     buttonBottom: 60,
@@ -115,6 +130,41 @@ export const VIEW = {
     /** The start button is pinned to the bottom of the screen. */
     startHeight: 116,
     startBottom: 84,
+    /**
+     * The hangar bar, the last strip of the screen: it sits under the start
+     * button in the space left below it, so no existing row moves.
+     */
+    hangarHeight: 44,
+    hangarBottom: 26,
+  },
+
+  /**
+   * The hangar collection screen shown on coming back. One big number, two lines
+   * of explanation and one wide button, so the whole thing reads at a glance.
+   */
+  hangar: {
+    panelWidth: 600,
+    panelHeight: 660,
+    titleTop: 44,
+    stampTop: 96,
+    /** The pile itself: the number the player came back for. */
+    amountTop: 176,
+    /** Below the unit under the number, so «ЛОМ» is not stepped on. */
+    linesTop: 330,
+    lineHeight: 40,
+    buttonWidth: 420,
+    buttonHeight: 112,
+    buttonBottom: 52,
+    /** The number breathes while it waits to be taken. */
+    idlePulseMs: 900,
+    idlePulseScale: 1.06,
+    /** Taking it: the number flies up and fades while the panel shakes. */
+    collectRiseMs: 460,
+    collectRise: 130,
+    shakeMs: 70,
+    shakeOffset: 9,
+    /** Left on screen after the flight, so the last frame is seen. */
+    collectHoldMs: 120,
   },
 
   font: {

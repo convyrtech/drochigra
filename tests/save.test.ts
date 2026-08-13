@@ -208,6 +208,42 @@ describe('save and load', () => {
   });
 });
 
+describe('loadProfile and the version 1 save', () => {
+  /** A save written by the build before the hangar existed. */
+  const SAVE_V1 = {
+    version: 1,
+    wallet: { [SCRAP]: 1730, [CRYSTAL]: 6 },
+    upgrades: { [DRILL]: 4, hangar: 2, salvo: 5 },
+    deepestRow: 20,
+    bestShiftScrap: 940,
+    fiveYearPlan: 2,
+  };
+
+  it('keeps everything an old save had and stamps the visit with now', () => {
+    const now = 1_700_000_000_000;
+    const store = memoryStore({ [SAVE_KEY]: JSON.stringify(SAVE_V1) });
+    const loaded = loadProfile(balance, store, now);
+    expect(walletAmount(loaded, SCRAP)).toBe(1730);
+    expect(walletAmount(loaded, CRYSTAL)).toBe(6);
+    expect(upgradeLevel(loaded, DRILL)).toBe(4);
+    expect(upgradeLevel(loaded, 'hangar')).toBe(2);
+    expect(upgradeLevel(loaded, 'salvo')).toBe(5);
+    expect(loaded.deepestRow).toBe(20);
+    expect(loaded.bestShiftScrap).toBe(940);
+    expect(loaded.fiveYearPlan).toBe(2);
+    expect(loaded.lastVisitMs).toBe(now);
+  });
+
+  it('writes it back as the current version, and reads that back unchanged', () => {
+    const now = 1_700_000_000_000;
+    const store = memoryStore({ [SAVE_KEY]: JSON.stringify(SAVE_V1) });
+    const migrated = loadProfile(balance, store, now);
+    expect(saveProfile(migrated, store)).toBe(true);
+    expect(JSON.parse(store.getItem(SAVE_KEY) ?? '').version).toBe(SAVE_VERSION);
+    expect(loadProfile(balance, store, now + 5_000)).toEqual(migrated);
+  });
+});
+
 describe('browserStore', () => {
   it('finds no localStorage in node and never throws', () => {
     expect(() => browserStore()).not.toThrow();

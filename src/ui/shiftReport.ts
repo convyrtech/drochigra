@@ -9,6 +9,11 @@ import type { ShiftReport } from '../sim/shift.js';
  * spent. Everything shown here is already saved — the plan, the premium and the
  * new checkpoints come from the ShiftOutcome the base wrote to the profile.
  *
+ * It is laid out as the paper form the station would file: a header band with the
+ * form code and the five-year plan, the plan percent as the headline, and one
+ * ruled row per figure — what it is on the left, the number on the right. The
+ * numbers and the rules behind them are untouched, only the shape is a form.
+ *
  * Every part is pinned to the screen with scrollFactor 0, the same way the HUD
  * is: that keeps the button's hit area under the button while the shaft is
  * scrolled away from the origin.
@@ -22,6 +27,9 @@ export interface ShiftReportOptions {
   readonly outcome: ShiftOutcome;
   readonly onBack: () => void;
 }
+
+/** One ruled row of the form: the caption, the figure, and the figure's colour. */
+type FormRow = readonly [string, string, number];
 
 export function createShiftReport(
   scene: Phaser.Scene,
@@ -41,55 +49,118 @@ export function createShiftReport(
     .setStrokeStyle(3, COLORS.domeEdge);
 
   const breach = report.endReason === 'breach';
-  const title = scene.add
-    .text(width / 2, panelY + box.titleTop, breach ? 'СМЕНА СОРВАНА' : 'СМЕНА ОКОНЧЕНА', {
-      fontFamily: FONT_FAMILY,
-      fontSize: font.large,
-      color: cssColor(breach ? COLORS.warning : COLORS.text),
-    })
-    .setOrigin(0.5, 0);
+
+  // The header band of the form, the way a station blank would print it.
+  const headerBand = scene.add
+    .rectangle(panelX, panelY, box.panelWidth, box.headerHeight, COLORS.dome)
+    .setOrigin(0, 0);
+  const headerEdge = scene.add
+    .rectangle(panelX, panelY + box.headerHeight, box.panelWidth, box.ruleHeight, COLORS.domeEdge)
+    .setOrigin(0, 0);
+
+  const title = centered(
+    scene,
+    width / 2,
+    panelY + box.titleTop,
+    breach ? 'АКТ О СРЫВЕ СМЕНЫ' : 'ОТЧЁТ ПО СМЕНЕ',
+    font.large,
+    breach ? COLORS.warning : COLORS.text,
+  );
+  const formCode = centered(
+    scene,
+    width / 2,
+    panelY + box.formCodeTop,
+    `ФОРМА В-9 · ПЯТИЛЕТКА ${outcome.profile.fiveYearPlan} · СТАНЦИЯ ВОСТОК-9`,
+    font.tiny,
+    COLORS.textDim,
+  );
 
   // The plan is a share of the best shift so far (PLAN_V1 §4), so the percent is
   // what the player reads to see whether the premium was earned.
   const quotaPercent = Math.round((outcome.quota > 0 ? report.banked / outcome.quota : 1) * 100);
   const planMet = report.banked >= outcome.quota;
 
-  const lines: readonly (readonly [string, number])[] = [
-    [`Добыто лома: ${report.mined}`, COLORS.scrap],
-    [`Сдано лома: ${report.banked}`, COLORS.scrap],
+  const percent = centered(
+    scene,
+    width / 2,
+    panelY + box.percentTop,
+    `ПЛАН ВЫПОЛНЕН НА ${quotaPercent}%`,
+    font.large,
+    planMet ? COLORS.buttonEdge : COLORS.warning,
+  );
+  const stamp = centered(
+    scene,
+    width / 2,
+    panelY + box.stampTop,
+    planMet ? 'ПЛАН ПЕРЕКРЫТ — НАЧИСЛЕНА ПРЕМИЯ' : 'ПЛАН НЕ ЗАКРЫТ — ПРЕМИЯ НЕ НАЧИСЛЕНА',
+    font.small,
+    planMet ? COLORS.buttonEdge : COLORS.textDim,
+  );
+
+  const rows: readonly FormRow[] = [
+    ['Графа 1 · норма к сдаче', String(outcome.quota), COLORS.text],
+    ['Графа 2 · добыто лома', String(report.mined), COLORS.scrap],
+    ['Графа 3 · сдано лома', String(report.banked), COLORS.scrap],
     // A breach is the only way the cargo is ever lost, so this line only shows up then.
     ...(breach
-      ? ([[`Потеряно в карго: ${report.mined - report.banked}`, COLORS.warning]] as const)
+      ? ([['Графа 3а · утрачено в карго', String(report.mined - report.banked), COLORS.warning]] as const)
       : []),
-    [
-      `План ${outcome.quota} — выполнен на ${quotaPercent}%`,
-      planMet ? COLORS.buttonEdge : COLORS.textDim,
-    ],
     ...(outcome.bonusScrap > 0
-      ? ([[`Премия за план: +${outcome.bonusScrap}`, COLORS.scrap]] as const)
+      ? ([['Графа 4 · премия за перекрытие', `+${outcome.bonusScrap}`, COLORS.scrap]] as const)
       : []),
-    [`Зачислено лома: ${outcome.scrapEarned}`, COLORS.scrap],
-    ...(outcome.record ? ([['Новый рекорд смены', COLORS.buttonEdge]] as const) : []),
-    [`Глубина: ${report.deepestRow} из ${maxDepthRow}`, COLORS.text],
+    ['Графа 5 · зачислено лома', String(outcome.scrapEarned), COLORS.scrap],
+    [
+      'Графа 6 · достигнутая глубина',
+      `${report.deepestRow} / ${maxDepthRow}`,
+      COLORS.text,
+    ],
     ...(outcome.newCheckpoints > 0
       ? ([
           [
-            `Новых чекпоинтов: ${outcome.newCheckpoints} (+${outcome.checkpointCrystals} кристаллов)`,
+            'Графа 7 · вскрыто чекпоинтов',
+            `${outcome.newCheckpoints} (+${outcome.checkpointCrystals} кр.)`,
             COLORS.crystal,
           ],
         ] as const)
       : []),
-    [`Кристаллы: ${outcome.crystalsEarned}`, COLORS.crystal],
-    [`Волн пришло: ${report.waves}`, COLORS.textDim],
+    ['Графа 8 · зачислено кристаллов', String(outcome.crystalsEarned), COLORS.crystal],
+    ['Графа 9 · отбито волн', String(report.waves), COLORS.textDim],
+    [
+      'Графа 10 · рекорд смены',
+      outcome.record ? `${report.banked} — НОВЫЙ` : String(outcome.profile.bestShiftScrap),
+      outcome.record ? COLORS.buttonEdge : COLORS.textDim,
+    ],
   ];
-  const lineObjects = lines.map(([text, color], index) =>
-    scene.add
-      .text(width / 2, panelY + box.linesTop + box.lineHeight * index, text, {
-        fontFamily: FONT_FAMILY,
-        fontSize: font.medium,
-        color: cssColor(color),
-      })
-      .setOrigin(0.5, 0),
+
+  const rowParts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [];
+  rows.forEach(([label, value, color], index) => {
+    const rowY = panelY + box.rowsTop + box.rowHeight * index;
+    rowParts.push(
+      left(scene, panelX + box.pad, rowY, label, font.small, COLORS.textDim),
+      right(scene, panelX + box.panelWidth - box.pad, rowY, value, font.medium, color),
+      // The ruled line every blank has under a filled figure.
+      scene.add
+        .rectangle(
+          panelX + box.pad,
+          rowY + box.rowHeight - box.ruleHeight,
+          box.panelWidth - box.pad * 2,
+          box.ruleHeight,
+          COLORS.dugEdge,
+        )
+        .setOrigin(0, 0),
+    );
+  });
+
+  const signatureY = panelY + box.panelHeight - box.signatureBottom;
+  const signature = left(
+    scene,
+    panelX + box.pad,
+    signatureY,
+    breach
+      ? 'Начальник смены: подпись · причина срыва: пробитие купола'
+      : 'Начальник смены: подпись · отчёт принят к учёту',
+    font.tiny,
+    COLORS.textDim,
   );
 
   const buttonX = (width - box.buttonWidth) / 2;
@@ -109,7 +180,60 @@ export function createShiftReport(
     })
     .setOrigin(0.5);
 
-  for (const part of [shade, panel, title, ...lineObjects, button, buttonText]) {
+  const parts = [
+    shade,
+    panel,
+    headerBand,
+    headerEdge,
+    title,
+    formCode,
+    percent,
+    stamp,
+    ...rowParts,
+    signature,
+    button,
+    buttonText,
+  ];
+  for (const part of parts) {
     part.setScrollFactor(0).setDepth(depth);
   }
+}
+
+function centered(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  text: string,
+  fontSize: string,
+  color: number,
+): Phaser.GameObjects.Text {
+  return scene.add
+    .text(x, y, text, { fontFamily: FONT_FAMILY, fontSize, color: cssColor(color) })
+    .setOrigin(0.5, 0);
+}
+
+function left(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  text: string,
+  fontSize: string,
+  color: number,
+): Phaser.GameObjects.Text {
+  return scene.add
+    .text(x, y, text, { fontFamily: FONT_FAMILY, fontSize, color: cssColor(color) })
+    .setOrigin(0, 0);
+}
+
+function right(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  text: string,
+  fontSize: string,
+  color: number,
+): Phaser.GameObjects.Text {
+  return scene.add
+    .text(x, y, text, { fontFamily: FONT_FAMILY, fontSize, color: cssColor(color) })
+    .setOrigin(1, 0);
 }

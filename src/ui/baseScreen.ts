@@ -5,15 +5,18 @@ import {
   canBuyUpgrade,
   checkpointRows,
   deepestOpenCheckpoint,
+  hangarScrapPerHour,
   isCheckpointOpen,
   nextUpgrade,
   resourceIds,
   resourceName,
+  scrapId,
   shiftQuota,
   upgradeIds,
   upgradeItem,
   upgradeLevel,
   walletAmount,
+  type HangarHarvest,
   type Profile,
 } from '../sim/progress.js';
 
@@ -31,7 +34,7 @@ import {
  */
 export interface BaseScreen {
   /** Repaints everything from a new profile. Used right after a purchase. */
-  readonly update: (profile: Profile) => void;
+  readonly update: (profile: Profile, harvest?: HangarHarvest) => void;
   readonly destroy: () => void;
 }
 
@@ -41,6 +44,12 @@ export interface BaseScreenOptions {
   readonly depth: number;
   readonly balance: Balance;
   readonly profile: Profile;
+  /**
+   * What the hangar holds right now, for the fill bar. The clock is the scene's
+   * business, so the reading is handed in; without it the bar shows an empty
+   * hangar, which is what a player who just collected has.
+   */
+  readonly harvest?: HangarHarvest;
   /** One level of a branch. The scene buys it and hands the new profile back. */
   readonly onBuy: (upgradeId: string) => void;
   readonly onStartShift: (startRow: number) => void;
@@ -60,6 +69,7 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   const rowWidth = width - base.margin * 2;
 
   let profile = options.profile;
+  let harvest = options.harvest ?? null;
   let selectedRow = deepestOpenCheckpoint(balance, profile);
 
   const backdrop = scene.add.rectangle(0, 0, width, height, COLORS.shaft).setOrigin(0, 0);
@@ -132,6 +142,25 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     COLORS.text,
   ).setOrigin(0.5, 0.5);
 
+  // The hangar bar goes into the strip left below the start button: how full the
+  // hangar is and what an hour away is worth, in one line (PLAN_V1 §7).
+  const hangarY = height - base.hangarBottom - base.hangarHeight;
+  const hangarBack = scene.add
+    .rectangle(base.margin, hangarY, rowWidth, base.hangarHeight, COLORS.buttonOff)
+    .setOrigin(0, 0)
+    .setStrokeStyle(2, COLORS.dugEdge);
+  const hangarFill = scene.add
+    .rectangle(base.margin, hangarY, 0, base.hangarHeight, COLORS.scrap, 0.35)
+    .setOrigin(0, 0);
+  const hangarLabel = centerText(
+    scene,
+    width / 2,
+    hangarY + base.hangarHeight / 2,
+    '',
+    font.tiny,
+    COLORS.scrap,
+  ).setOrigin(0.5, 0.5);
+
   const parts: PinnedPart[] = [
     backdrop,
     header,
@@ -144,6 +173,9 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     ...chips.flatMap((chip) => [...chip.parts]),
     start,
     startLabel,
+    hangarBack,
+    hangarFill,
+    hangarLabel,
   ];
   for (const part of parts) {
     part.setScrollFactor(0).setDepth(depth);
@@ -162,13 +194,27 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
       chip.setSelected(rows[index] === selectedRow);
     });
     startLabel.setText(`НАЧАТЬ СМЕНУ · РЯД ${selectedRow}`);
+    repaintHangar();
+  }
+
+  function repaintHangar(): void {
+    const share = Math.min(1, Math.max(0, harvest?.fillShare ?? 0));
+    hangarFill.width = rowWidth * share;
+    const perHour = Math.round(hangarScrapPerHour(balance, profile));
+    const scrapLabel = resourceName(balance, scrapId(balance)).toUpperCase();
+    hangarLabel.setText(
+      `АНГАР: ${Math.round(share * 100)}% · ${perHour} ${scrapLabel}/Ч`,
+    );
   }
 
   repaint();
 
   return {
-    update(next: Profile): void {
+    update(next: Profile, nextHarvest?: HangarHarvest): void {
       profile = next;
+      if (nextHarvest !== undefined) {
+        harvest = nextHarvest;
+      }
       // A new shift may have opened deeper checkpoints; the pick stays where the
       // player put it as long as it is still open.
       if (!isCheckpointOpen(profile, selectedRow)) {

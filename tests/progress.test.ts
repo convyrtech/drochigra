@@ -7,10 +7,13 @@ import {
   canBuyUpgrade,
   cheapestUpgrade,
   checkpointRows,
+  collectHangar,
   createProfile,
   crystalId,
   deepestOpenCheckpoint,
   effectiveBalance,
+  hangarHarvest,
+  hangarScrapPerHour,
   hasConveyor,
   isCheckpointOpen,
   isUpgradeMaxed,
@@ -24,6 +27,7 @@ import {
   SAVE_VERSION,
   scrapId,
   shiftQuota,
+  touchVisit,
   upgradeCost,
   upgradeIds,
   upgradeLevel,
@@ -76,6 +80,7 @@ function profileWith(patch: {
   deepestRow?: number;
   bestShiftScrap?: number;
   fiveYearPlan?: number;
+  lastVisitMs?: number;
 }): Profile {
   const fresh = createProfile(balance);
   return {
@@ -85,6 +90,7 @@ function profileWith(patch: {
     deepestRow: patch.deepestRow ?? fresh.deepestRow,
     bestShiftScrap: patch.bestShiftScrap ?? fresh.bestShiftScrap,
     fiveYearPlan: patch.fiveYearPlan ?? fresh.fiveYearPlan,
+    lastVisitMs: patch.lastVisitMs ?? fresh.lastVisitMs,
   };
 }
 
@@ -737,10 +743,12 @@ describe('profileFromSaved', () => {
   it('refuses a save written by another version', () => {
     const saved = profileToSaved(createProfile(balance));
     expect(profileFromSaved(balance, { ...saved, version: SAVE_VERSION + 1 })).toBeNull();
-    expect(profileFromSaved(balance, { ...saved, version: SAVE_VERSION - 1 })).toBeNull();
     expect(profileFromSaved(balance, { ...saved, version: String(SAVE_VERSION) })).toBeNull();
     const { version: _version, ...noVersion } = saved;
     expect(profileFromSaved(balance, noVersion)).toBeNull();
+    // Version 1 is not foreign, it is the previous schema: it is migrated, see
+    // the "migration from version 1" block below.
+    expect(profileFromSaved(balance, { ...saved, version: SAVE_VERSION - 2 })).toBeNull();
   });
 
   it('refuses anything that is not an object', () => {
@@ -878,5 +886,284 @@ describe('profileFromSaved', () => {
       balance.shift.checkpoint_every_rows,
     );
     expect(shiftQuota(balance, loaded as Profile)).toBe(balance.shift.quota_min);
+  });
+});
+
+/* ------------------------------------------------------------------- hangar */
+
+/** One hour in milliseconds. A unit of the clock, not a game number. */
+const HOUR_MS = 3600 * 1000;
+
+/** Balance variant with the hangar numbers bent, to prove the code reads them. */
+function offlineBalance(patch: { perHourPerDepth?: number; capHours?: number }): Balance {
+  return {
+    ...balance,
+    offline: {
+      scrap_per_hour_per_depth: patch.perHourPerDepth ?? balance.offline.scrap_per_hour_per_depth,
+      cap_hours: patch.capHours ?? balance.offline.cap_hours,
+    },
+  };
+}
+
+describe('hangarScrapPerHour', () => {
+  it('pays scrap_per_hour_per_depth for every row the player reached', () => {
+    const profile = profileWith({ deepestRow: 12 });
+    expect(hangarScrapPerHour(balance, profile)).toBe(
+      balance.offline.scrap_per_hour_per_depth * 12,
+    );
+  });
+
+  it('adds the hangar step for every level bought', () => {
+    const step = item(HANGAR).step;
+    for (const level of [0, 1, 3, 7]) {
+      const profile = profileWith({ deepestRow: 10, upgrades: { [HANGAR]: level } });
+      expect(hangarScrapPerHour(balance, profile)).toBeCloseTo(
+        balance.offline.scrap_per_hour_per_depth * 10 * (1 + step * level),
+        6,
+      );
+    }
+  });
+
+  it('pays nothing to an account that never went down', () => {
+    const fresh = createProfile(balance);
+    expect(fresh.deepestRow).toBe(ENTRANCE_ROW);
+    expect(hangarScrapPerHour(balance, fresh)).toBe(0);
+    // Even a fully upgraded hangar multiplies zero depth by nothing.
+    expect(hangarScrapPerHour(balance, profileWith({ upgrades: { [HANGAR]: 9 } }))).toBe(0);
+  });
+
+  it('reads the number out of balance instead of carrying its own', () => {
+    const profile = profileWith({ deepestRow: 5 });
+    expect(hangarScrapPerHour(offlineBalance({ perHourPerDepth: 100 }), profile)).toBe(500);
+  });
+});
+
+describe('hangarHarvest', () => {
+  it('pays hours away times the hourly rate', () => {
+    const profile = profileWith({ deepestRow: 10, lastVisitMs: 0 });
+    const harvest = hangarHarvest(balance, profile, HOUR_MS * 2);
+    expect(harvest.hours).toBeCloseTo(2, 6);
+    expect(harvest.scrap).toBe(balance.offline.scrap_per_hour_per_depth * 10 * 2);
+  });
+
+  it('stops at cap_hours however long the game was closed', () => {
+    const cap = balance.offline.cap_hours;
+    const profile = profileWith({ deepestRow: 30, lastVisitMs: 0 });
+    const capped = hangarHarvest(balance, profile, HOUR_MS * 100);
+    expect(capped.hours).toBe(cap);
+    expect(capped.scrap).toBe(
+      Math.floor(balance.offline.scrap_per_hour_per_depth * 30 * cap),
+    );
+    expect(capped.fillShare).toBe(1);
+    // A day away and a week away are worth exactly the same.
+    expect(hangarHarvest(balance, profile, HOUR_MS * 24 * 7)).toEqual(capped);
+  });
+
+  it('is empty right after a visit and fills up towards the ceiling', () => {
+    const profile = profileWith({ deepestRow: 20, lastVisitMs: HOUR_MS });
+    const now = hangarHarvest(balance, profile, HOUR_MS);
+    expect(now.scrap).toBe(0);
+    expect(now.hours).toBe(0);
+    expect(now.fillShare).toBe(0);
+
+    const half = hangarHarvest(balance, profile, HOUR_MS + HOUR_MS * (balance.offline.cap_hours / 2));
+    expect(half.fillShare).toBeCloseTo(0.5, 6);
+  });
+
+  it('pays nothing when the clock went backwards', () => {
+    const profile = profileWith({ deepestRow: 30, lastVisitMs: HOUR_MS * 10 });
+    for (const now of [HOUR_MS * 9, 0, -HOUR_MS]) {
+      const harvest = hangarHarvest(balance, profile, now);
+      expect(harvest.scrap).toBe(0);
+      expect(harvest.hours).toBe(0);
+      expect(harvest.fillShare).toBe(0);
+    }
+  });
+
+  it('pays nothing at all without depth, however long the wait', () => {
+    const profile = profileWith({ deepestRow: 0, upgrades: { [HANGAR]: 5 }, lastVisitMs: 0 });
+    const harvest = hangarHarvest(balance, profile, HOUR_MS * 100);
+    expect(harvest.scrap).toBe(0);
+    // The bar still fills: the hangar is full of nothing, which is honest.
+    expect(harvest.fillShare).toBe(1);
+  });
+
+  it('hands over whole scrap only', () => {
+    const profile = profileWith({ deepestRow: 1, lastVisitMs: 0 });
+    const harvest = hangarHarvest(offlineBalance({ perHourPerDepth: 7 }), profile, HOUR_MS / 2);
+    expect(harvest.scrap).toBe(3);
+  });
+
+  it('never throws and never pays on a broken clock', () => {
+    const profile = profileWith({ deepestRow: 10, lastVisitMs: 0 });
+    for (const now of [Number.NaN, Number.NEGATIVE_INFINITY]) {
+      expect(() => hangarHarvest(balance, profile, now)).not.toThrow();
+      expect(hangarHarvest(balance, profile, now).scrap).toBe(0);
+    }
+  });
+
+  it('changes nothing in the profile it is asked about', () => {
+    const profile = profileWith({ deepestRow: 30, lastVisitMs: 0 });
+    const before = JSON.stringify(profile);
+    hangarHarvest(balance, profile, HOUR_MS * 3);
+    expect(JSON.stringify(profile)).toBe(before);
+  });
+});
+
+describe('collectHangar', () => {
+  it('puts the scrap in the wallet and moves the visit stamp to now', () => {
+    const profile = profileWith({ deepestRow: 10, wallet: { [SCRAP]: 100 }, lastVisitMs: 0 });
+    const now = HOUR_MS * 2;
+    const { profile: after, harvest } = collectHangar(balance, profile, now);
+    expect(harvest.scrap).toBe(balance.offline.scrap_per_hour_per_depth * 10 * 2);
+    expect(walletAmount(after, SCRAP)).toBe(100 + harvest.scrap);
+    expect(after.lastVisitMs).toBe(now);
+  });
+
+  it('never pays the same hours twice', () => {
+    const profile = profileWith({ deepestRow: 15, lastVisitMs: 0 });
+    const now = HOUR_MS * 3;
+    const first = collectHangar(balance, profile, now);
+    expect(first.harvest.scrap).toBeGreaterThan(0);
+
+    const second = collectHangar(balance, first.profile, now);
+    expect(second.harvest.scrap).toBe(0);
+    expect(walletAmount(second.profile, SCRAP)).toBe(walletAmount(first.profile, SCRAP));
+  });
+
+  it('brings scrap and nothing else: no crystals, no depth, no record', () => {
+    const profile = profileWith({
+      deepestRow: 20,
+      wallet: { [SCRAP]: 0, [CRYSTAL]: 4 },
+      bestShiftScrap: 700,
+      upgrades: { [HANGAR]: 3, [DRILL]: 2 },
+      fiveYearPlan: 2,
+      lastVisitMs: 0,
+    });
+    const { profile: after } = collectHangar(balance, profile, HOUR_MS * 6);
+    expect(walletAmount(after, CRYSTAL)).toBe(4);
+    expect(after.deepestRow).toBe(20);
+    expect(after.bestShiftScrap).toBe(700);
+    expect(after.fiveYearPlan).toBe(2);
+    expect(after.upgrades).toEqual(profile.upgrades);
+    // The plan is measured against played shifts, so the hangar cannot raise it.
+    expect(shiftQuota(balance, after)).toBe(shiftQuota(balance, profile));
+  });
+
+  it('takes nothing away when there is nothing to take', () => {
+    const profile = profileWith({ deepestRow: 30, wallet: { [SCRAP]: 500 }, lastVisitMs: HOUR_MS });
+    const { profile: after, harvest } = collectHangar(balance, profile, HOUR_MS / 2);
+    expect(harvest.scrap).toBe(0);
+    expect(walletAmount(after, SCRAP)).toBe(500);
+    // The clock went backwards, and the stamp still moves: the hangar restarts
+    // from the moment the player is actually here.
+    expect(after.lastVisitMs).toBe(HOUR_MS / 2);
+  });
+
+  it('leaves the profile it was handed untouched', () => {
+    const profile = profileWith({ deepestRow: 30, lastVisitMs: 0 });
+    const before = JSON.stringify(profile);
+    collectHangar(balance, profile, HOUR_MS * 6);
+    expect(JSON.stringify(profile)).toBe(before);
+  });
+});
+
+describe('touchVisit', () => {
+  it('moves the stamp and touches nothing else', () => {
+    const profile = profileWith({ deepestRow: 20, wallet: { [SCRAP]: 50 }, lastVisitMs: 0 });
+    const stamped = touchVisit(profile, HOUR_MS * 5);
+    expect(stamped.lastVisitMs).toBe(HOUR_MS * 5);
+    expect({ ...stamped, lastVisitMs: 0 }).toEqual({ ...profile, lastVisitMs: 0 });
+  });
+
+  it('empties the hangar: time in the game is not time offline', () => {
+    const profile = profileWith({ deepestRow: 30, lastVisitMs: 0 });
+    const stamped = touchVisit(profile, HOUR_MS * 6);
+    expect(hangarHarvest(balance, stamped, HOUR_MS * 6).scrap).toBe(0);
+  });
+
+  it('keeps the old stamp when the clock is unreadable', () => {
+    const profile = profileWith({ lastVisitMs: HOUR_MS });
+    expect(touchVisit(profile, Number.NaN).lastVisitMs).toBe(HOUR_MS);
+  });
+});
+
+/* --------------------------------------------------- migration from version 1 */
+
+/** A version 1 save: everything the old schema had, no visit stamp. */
+const SAVE_V1 = {
+  version: 1,
+  wallet: { [SCRAP]: 1730, [CRYSTAL]: 6 },
+  upgrades: { [DRILL]: 4, [TURRET]: 2, [CARGO]: 3, [HANGAR]: 2, [SALVO]: 5, [ELEVATOR]: 1 },
+  deepestRow: 20,
+  bestShiftScrap: 940,
+  fiveYearPlan: 2,
+} as const;
+
+describe('save migration v1 -> v2', () => {
+  it('reads a version 1 save instead of throwing it away', () => {
+    expect(SAVE_VERSION).toBe(2);
+    expect(profileFromSaved(balance, SAVE_V1, HOUR_MS)).not.toBeNull();
+  });
+
+  it('loses not a single scrap, crystal or bought level', () => {
+    const loaded = profileFromSaved(balance, SAVE_V1, HOUR_MS) as Profile;
+    expect(walletAmount(loaded, SCRAP)).toBe(1730);
+    expect(walletAmount(loaded, CRYSTAL)).toBe(6);
+    expect(upgradeLevel(loaded, DRILL)).toBe(4);
+    expect(upgradeLevel(loaded, TURRET)).toBe(2);
+    expect(upgradeLevel(loaded, CARGO)).toBe(3);
+    expect(upgradeLevel(loaded, HANGAR)).toBe(2);
+    expect(upgradeLevel(loaded, SALVO)).toBe(5);
+    expect(upgradeLevel(loaded, ELEVATOR)).toBe(1);
+    expect(loaded.deepestRow).toBe(20);
+    expect(loaded.bestShiftScrap).toBe(940);
+    expect(loaded.fiveYearPlan).toBe(2);
+  });
+
+  it('keeps the depth open and the plan where they were', () => {
+    const loaded = profileFromSaved(balance, SAVE_V1, HOUR_MS) as Profile;
+    expect(deepestOpenCheckpoint(balance, loaded)).toBe(20);
+    expect(shiftQuota(balance, loaded)).toBe(
+      Math.max(balance.shift.quota_min, Math.round(940 * balance.shift.quota_share_of_best)),
+    );
+  });
+
+  it('stamps the visit with the moment the player arrived', () => {
+    const now = HOUR_MS * 42;
+    const loaded = profileFromSaved(balance, SAVE_V1, now) as Profile;
+    expect(loaded.lastVisitMs).toBe(now);
+    // Which means the format change itself pays out nothing.
+    expect(hangarHarvest(balance, loaded, now).scrap).toBe(0);
+    // And the hangar starts counting from that visit on.
+    expect(hangarHarvest(balance, loaded, now + HOUR_MS).scrap).toBeGreaterThan(0);
+  });
+
+  it('migrates a version 1 save that has nothing readable in it', () => {
+    const loaded = profileFromSaved(balance, { version: 1 }, HOUR_MS);
+    expect(loaded).toEqual(createProfile(balance, HOUR_MS));
+  });
+
+  it('writes what it read back as version 2', () => {
+    const loaded = profileFromSaved(balance, SAVE_V1, HOUR_MS) as Profile;
+    const saved = profileToSaved(loaded);
+    expect(saved.version).toBe(SAVE_VERSION);
+    expect(saved.lastVisitMs).toBe(HOUR_MS);
+    // Second trip: a migrated save is a normal version 2 save from now on.
+    expect(profileFromSaved(balance, JSON.parse(JSON.stringify(saved)), 0)).toEqual(loaded);
+  });
+
+  it('repairs a version 2 save whose stamp is broken, without losing anything', () => {
+    const now = HOUR_MS * 7;
+    for (const stamp of [undefined, Number.NaN, 'вчера', -5]) {
+      const loaded = profileFromSaved(
+        balance,
+        { ...SAVE_V1, version: SAVE_VERSION, lastVisitMs: stamp },
+        now,
+      ) as Profile;
+      expect(walletAmount(loaded, SCRAP)).toBe(1730);
+      expect(loaded.lastVisitMs).toBeGreaterThanOrEqual(0);
+      expect(hangarHarvest(balance, loaded, now).scrap).toBe(0);
+    }
   });
 });
