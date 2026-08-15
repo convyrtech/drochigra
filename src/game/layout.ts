@@ -2,6 +2,12 @@
  * Screen layout only: proportions, fonts and colours from PLAN_V1 §3.
  * These are view numbers, not game numbers — every gameplay value stays in
  * content/balance.json.
+ *
+ * Issue #8 (mobile interface): every interactive hit-zone must be at least 48
+ * design pixels wide AND tall (Apple's recommended minimum touch-target size),
+ * so a finger lands on it easily at any FIT scale. The enemies picked by the
+ * turret use `dome.pickRadius`; the on-screen buttons keep their own sizes. If
+ * you add a new tappable thing, keep it ≥ 48 in both dimensions.
  */
 export const VIEW = {
   /** Design resolution, portrait. Phaser scales it to any screen. */
@@ -66,8 +72,13 @@ export const VIEW = {
     enemyBarHeight: 4,
     enemyBarOffset: 16,
     targetRingRadius: 20,
-    /** Taps this close to an enemy count as an order for the turret. */
-    pickRadius: 40,
+    /**
+     * Taps this close to an enemy count as an order for the turret. Issue #8:
+     * every interactive hit-zone must be at least 48 design pixels wide/tall so
+     * a finger lands easily; the enemy pick is the tap target of the fight, so
+     * it follows the same rule (it used to be 40).
+     */
+    pickRadius: 48,
     beamWidth: 3,
     frameWidth: 10,
     /** One full pulse of the alarm frame, in seconds. */
@@ -233,6 +244,27 @@ export const VIEW = {
     medium: '32px',
     small: '26px',
     tiny: '22px',
+  },
+
+  /**
+   * Chip particles on a dig (issue #8 performance): a small object pool so a
+   * busy dig never allocates and destroys rectangles per frame. `poolSize` is
+   * the total rectangles created once; `burstCount` is how many fly out of one
+   * broken cell. If the whole pool is busy the burst is simply skipped — the
+   * pool is a hard cap, so 60 fps never has to pay for new objects.
+   */
+  particles: {
+    poolSize: 28,
+    burstCount: 6,
+  },
+
+  /**
+   * Floating «+scrap» / «+1 crystal» numbers (issue #8 performance). A small
+   * pool of pre-created texts is cycled, so digging never adds or destroys text
+   * objects and the number of numbers on screen at once is bounded by poolSize.
+   */
+  floatText: {
+    poolSize: 6,
   },
 } as const;
 

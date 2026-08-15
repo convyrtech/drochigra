@@ -29,8 +29,16 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: env(safe-area-inset-top) env(safe-area-inset-right)
-          env(safe-area-inset-bottom) env(safe-area-inset-left);
+        /*
+         * Safe-area (issue #8): reserve room under the camera notch and the
+         * system gesture/nav bar. The canvas is FIT-scaled and centred inside
+         * this padded box (CENTER_BOTH), so its bottom edge — where НАЧАТЬ
+         * СМЕНУ and the hangar bar sit — never reaches the system bars. The
+         * viewport meta has viewport-fit=cover, which is what makes env()'s
+         * safe-area-inset-* report non-zero on devices with a notch.
+         */
+        padding: max(env(safe-area-inset-top), 0px) max(env(safe-area-inset-right), 0px)
+          max(env(safe-area-inset-bottom), 0px) max(env(safe-area-inset-left), 0px);
         box-sizing: border-box;
       }
 
@@ -38,10 +46,66 @@
         display: block;
         touch-action: none;
       }
+
+      /*
+       * Rotation prompt (issue #8). The game canvas FIT-adapts and never
+       * breaks on rotation, and screen.orientation.lock keeps the page portrait
+       * where the browser allows it. For browsers without lock support we show
+       * this overlay while the device is held sideways, so the player turns it
+       * back. It is shown only on phone-sized viewports (the JS toggles
+       * body.landscape) — a wide desktop window must not block the game.
+       */
+      #rotate {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: #05070d;
+        color: #e6ecff;
+        font-family: system-ui, sans-serif;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+
+      /* A phone turned sideways: block the game with a «turn the phone» note. */
+      body.landscape #rotate {
+        display: flex;
+      }
+
+      #rotate .box {
+        max-width: 320px;
+      }
+
+      #rotate .arrow {
+        font-size: 64px;
+        margin-bottom: 16px;
+      }
+
+      #rotate .title {
+        font-size: 26px;
+        font-weight: 700;
+        margin: 0 0 8px;
+      }
+
+      #rotate .hint {
+        font-size: 18px;
+        color: #8fa3c8;
+        margin: 0;
+      }
     </style>
   </head>
   <body>
     <div id="game"></div>
+    <div id="rotate">
+      <div class="box">
+        <div class="arrow">⟲</div>
+        <p class="title">Поверни телефон</p>
+        <p class="hint">Игра работает в вертикальной ориентации</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

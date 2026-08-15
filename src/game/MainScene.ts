@@ -41,7 +41,8 @@ import { createDomeView, type DomeView } from './domeView.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from './layout.js';
 import { browserStore, loadProfile, saveProfile } from './saveStorage.js';
 import { SFX } from './sfx.js';
-import { showFloatText } from '../ui/floatText.js';
+import { createChipPool, type ChipPool } from '../ui/particles.js';
+import { createFloatTextLayer, type FloatTextLayer } from '../ui/floatText.js';
 
 /** Depth order of the drawn parts. */
 const LAYER_DEPTH = {
@@ -96,6 +97,9 @@ export class MainScene extends Phaser.Scene {
   private domeView!: DomeView;
   private baseScreen: BaseScreen | null = null;
   private reportShown = false;
+  /** Pooled effects for the shift, so a busy dig never allocates per frame. */
+  private chipPool: ChipPool | null = null;
+  private floatLayer: FloatTextLayer | null = null;
   /**
    * Layers already announced by the banner this shift. A view-only memory: the
    * simulation has no idea a banner exists, and a shift that starts deep does not
@@ -127,6 +131,13 @@ export class MainScene extends Phaser.Scene {
   /** Sound starts only on a user gesture: unlock on the first tap anywhere. */
   private unlocked = false;
 
+  /**
+   * Whether the offset-tab pause handlers are attached. The scene restarts in
+   * place (`scene.restart` reuses the instance and re-runs create), so this
+   * guard keeps the listeners from piling up across restarts.
+   */
+  private pauseWired = false;
+
   constructor(balance: Balance) {
     super('main');
     this.balance = balance;
@@ -140,6 +151,7 @@ export class MainScene extends Phaser.Scene {
     this.cellPainted = [];
     this.reportShown = false;
     this.announcedLayers = new Set<number>();
+    this.wirePauseHandling();
 
     // localStorage and the clock are the view's business, never the simulation's.
     this.profile ??= loadProfile(this.balance, browserStore(), Date.now());
@@ -152,6 +164,55 @@ export class MainScene extends Phaser.Scene {
       return;
     }
     this.showBase(harvest);
+  }
+
+  /**
+   * Pause the game while the tab is hidden or the window loses focus (issue #8):
+   * the shift timer runs in `update`, so while the page is in the background it
+   * would keep ticking in real time and the player would come back to a finished
+   * or nearly-finished shift. Pausing the whole scene stops `update` (and with
+   * it every tween, so the particles and float numbers of #7 simply hold and
+   * resume) until the tab is visible and focused again.
+   *
+   * The profile is already saved after every purchase and every shift end, so
+   * pausing mid-shift loses nothing that the save owns; only an in-progress
+   * shift is dropped, which is the pre-existing behaviour on full close.
+   *
+   * `pause`/`resume` are idempotent and cheap, so both the visibility change and
+   * the focus events can fire for the same moment without double-stepping.
+   */
+  private wirePauseHandling(): void {
+    if (this.pauseWired) {
+      return;
+    }
+    this.pauseWired = true;
+    const key = 'main';
+    const pause = (): void => {
+      if (this.scene.isActive(key)) {
+        this.scene.pause(key);
+      }
+    };
+    const resume = (): void => {
+      if (this.scene.isPaused(key)) {
+        this.scene.resume(key);
+      }
+    };
+    const onVisibility = (): void => {
+      if (document.hidden) {
+        pause();
+      } else {
+        resume();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', pause);
+    window.addEventListener('focus', resume);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', pause);
+      window.removeEventListener('focus', resume);
+      this.pauseWired = false;
+    });
   }
 
   override update(_time: number, deltaMs: number): void {
@@ -372,6 +433,10 @@ export class MainScene extends Phaser.Scene {
     this.turretTick = 0;
 
     this.drawShaft();
+    // Effects that only the shift uses: created fresh for the shift so pools
+    // follow a scene restart instead of leaking objects across it.
+    this.chipPool = createChipPool(this, FLOAT_DEPTH);
+    this.floatLayer = createFloatTextLayer(this);
     this.hud = createHud(this, {
       width,
       domeHeight: this.domeHeight,
@@ -601,7 +666,9 @@ export class MainScene extends Phaser.Scene {
   /**
    * A cell just opened: reward it with the crack of the drill, a floating
    * «+scrap» (and «+1 crystal» when one dropped), and a burst of chips. All
-   * view-only — the simulation has already finished the dig and moved on.
+   * view-only — the simulation has already finished the dig and moved on. The
+   * chips and numbers come from pools, so a run of quick digs never creates or
+   * destroys objects (issue #8 performance).
    */
   private onCellDug(row: number, col: number): void {
     const state = this.state;
@@ -613,47 +680,17 @@ export class MainScene extends Phaser.Scene {
     const cy = (row + 0.5) * size;
 
     SFX.dig();
-    this.burstParticles(cx, cy, size);
+    this.chipPool?.burst(cx, cy, size);
 
     const scrap = cellYield(state.balance.layers, row);
-    showFloatText(this, cx, cy, `+${scrap}`, COLORS.scrap, FLOAT_DEPTH);
+    this.floatLayer?.show(cx, cy, `+${scrap}`, COLORS.scrap, FLOAT_DEPTH);
 
     // A crystal dropped this dig: say so, in its own colour, on the same cell.
     if (state.crystals > this.prevCrystals) {
-      showFloatText(this, cx, cy + size * 0.3, '+1 ✦', COLORS.crystal, FLOAT_DEPTH);
+      this.floatLayer?.show(cx, cy + size * 0.3, '+1 ✦', COLORS.crystal, FLOAT_DEPTH);
       this.prevCrystals = state.crystals;
     }
     this.prevCrystals = state.crystals;
-  }
-
-  /** A short spray of chips where the rock broke, gone in a third of a second. */
-  private burstParticles(cx: number, cy: number, size: number): void {
-    const count = 6;
-    for (let i = 0; i < count; i += 1) {
-      const chip = this.add
-        .rectangle(
-          cx + (Math.random() - 0.5) * size * 0.5,
-          cy + (Math.random() - 0.5) * size * 0.5,
-          size * (0.08 + Math.random() * 0.08),
-          size * (0.08 + Math.random() * 0.08),
-          Math.random() < 0.3 ? COLORS.scrap : COLORS.progress,
-        )
-        .setDepth(FLOAT_DEPTH);
-      const angle = Math.random() * Math.PI * 2;
-      const dist = size * (0.3 + Math.random() * 0.6);
-      this.tweens.add({
-        targets: chip,
-        x: chip.x + Math.cos(angle) * dist,
-        y: chip.y + Math.sin(angle) * dist,
-        alpha: 0,
-        angle: Math.random() * 180 - 90,
-        duration: 280 + Math.random() * 140,
-        ease: Phaser.Math.Easing.Quadratic.Out,
-        onComplete: () => {
-          chip.destroy();
-        },
-      });
-    }
   }
 
   /** Camera keeps the drill in the middle of the shaft zone, below the dome. */
