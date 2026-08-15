@@ -167,6 +167,59 @@ export const VIEW = {
     collectHoldMs: 120,
   },
 
+  /**
+   * The banner that announces a new layer during a shift. It sits just under the
+   * dome zone, over the shaft, so it never covers the timer or the buttons, and
+   * it leaves on its own: crossing a border is an event, not a screen.
+   */
+  layerBanner: {
+    panelWidth: 560,
+    panelHeight: 104,
+    /** Gap between the bottom of the dome zone and the top of the banner. */
+    topGap: 26,
+    titleTop: 16,
+    detailTop: 62,
+    panelAlpha: 0.94,
+    /** It floats up into place, holds long enough to be read, then fades out. */
+    rise: 42,
+    riseMs: 300,
+    holdMs: 1600,
+    fadeMs: 420,
+  },
+
+  /**
+   * The victory screen: the bottom of the Abyss on row 30 and the next five-year
+   * plan. Same station paper as the report, one line per promise, one wide button.
+   */
+  victory: {
+    panelWidth: 620,
+    panelHeight: 900,
+    pad: 30,
+    titleTop: 40,
+    stampTop: 104,
+    /** The row the whole thing is about, in the biggest type the panel takes. */
+    depthTop: 168,
+    depthUnitTop: 250,
+    /** Figures of the closed plan, one ruled row each. */
+    rowsTop: 322,
+    rowHeight: 48,
+    ruleHeight: 1,
+    /** What the next plan changes, as a list under the figures. */
+    promisesTop: 542,
+    promiseHeight: 40,
+    buttonWidth: 480,
+    buttonHeight: 116,
+    buttonBottom: 48,
+    /** The row number breathes while the screen waits to be closed. */
+    idlePulseMs: 1000,
+    idlePulseScale: 1.05,
+    /** Opening: the paper drops in and the number lands after it. */
+    enterMs: 320,
+    enterRise: 60,
+    /** Closing: the panel flashes once and the new plan begins. */
+    startFadeMs: 360,
+  },
+
   font: {
     huge: '58px',
     large: '44px',

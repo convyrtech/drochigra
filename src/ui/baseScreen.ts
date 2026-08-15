@@ -80,7 +80,11 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
 
   const title = centerText(scene, width / 2, base.titleY, 'БАЗА · МЕЖДУ СМЕНАМИ', font.large, COLORS.text);
   const wallet = centerText(scene, width / 2, base.walletY, '', font.medium, COLORS.scrap);
-  const plan = centerText(scene, width / 2, base.planY, '', font.small, COLORS.textDim);
+  // The plan row is split the way the HUD splits its rows: which five-year plan
+  // the station is in on the left, the quota that plan hands out on the right.
+  // Both are short, so nothing has to move to fit them on one line.
+  const planNumber = leftText(scene, base.margin, base.planY, '', font.small, COLORS.buttonEdge);
+  const plan = rightText(scene, width - base.margin, base.planY, '', font.small, COLORS.textDim);
 
   const upgradeRows = upgradeIds(balance).map((id, index) =>
     createUpgradeRow(scene, {
@@ -167,6 +171,7 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     headerEdge,
     title,
     wallet,
+    planNumber,
     plan,
     ...upgradeRows.flatMap((row) => [...row.parts]),
     depthTitle,
@@ -183,7 +188,8 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
 
   function repaint(): void {
     wallet.setText(walletLine(balance, profile));
-    plan.setText(`ПЛАН НА СМЕНУ: СДАТЬ ${shiftQuota(balance, profile)}`);
+    planNumber.setText(`ПЯТИЛЕТКА ${profile.fiveYearPlan}`);
+    plan.setText(`НОРМА СМЕНЫ: ${shiftQuota(balance, profile)}`);
     for (const row of upgradeRows) {
       row.update(profile);
     }
@@ -407,4 +413,17 @@ function centerText(
   return scene.add
     .text(x, y, text, { fontFamily: FONT_FAMILY, fontSize, color: cssColor(color) })
     .setOrigin(0.5, 0);
+}
+
+function rightText(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  text: string,
+  fontSize: string,
+  color: number,
+): Phaser.GameObjects.Text {
+  return scene.add
+    .text(x, y, text, { fontFamily: FONT_FAMILY, fontSize, color: cssColor(color) })
+    .setOrigin(1, 0);
 }

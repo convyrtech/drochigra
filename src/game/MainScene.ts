@@ -5,9 +5,12 @@ import {
   applyShiftResult,
   buyUpgrade,
   collectHangar,
-  effectiveBalance,
   hangarHarvest,
   hasConveyor,
+  isBottomReached,
+  planBalance,
+  shiftBalance,
+  startNextPlan,
   touchVisit,
   type HangarHarvest,
   type Profile,
@@ -19,6 +22,7 @@ import {
   cellAt,
   createShift,
   digProgress,
+  drillLayerIndex,
   ENTRANCE_ROW,
   fireSalvo,
   isCargoBlocked,
@@ -29,7 +33,9 @@ import {
 import { createBaseScreen, type BaseScreen } from '../ui/baseScreen.js';
 import { createHangarScreen } from '../ui/hangarScreen.js';
 import { createHud, type Hud } from '../ui/hud.js';
+import { showLayerBanner } from '../ui/layerBanner.js';
 import { createShiftReport } from '../ui/shiftReport.js';
+import { createVictoryScreen } from '../ui/victoryScreen.js';
 import { createDomeView, type DomeView } from './domeView.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from './layout.js';
 import { browserStore, loadProfile, saveProfile } from './saveStorage.js';
@@ -44,9 +50,11 @@ const LAYER_DEPTH = {
   hud: 10,
   dome: 11,
   alarm: 12,
+  banner: 15,
   report: 20,
   base: 30,
   hangar: 40,
+  victory: 50,
 } as const;
 
 /**
@@ -78,6 +86,12 @@ export class MainScene extends Phaser.Scene {
   private domeView!: DomeView;
   private baseScreen: BaseScreen | null = null;
   private reportShown = false;
+  /**
+   * Layers already announced by the banner this shift. A view-only memory: the
+   * simulation has no idea a banner exists, and a shift that starts deep does not
+   * announce the layer the elevator drops the drill into.
+   */
+  private announcedLayers = new Set<number>();
 
   constructor(balance: Balance) {
     super('main');
@@ -91,6 +105,7 @@ export class MainScene extends Phaser.Scene {
     this.cellRects = [];
     this.cellPainted = [];
     this.reportShown = false;
+    this.announcedLayers = new Set<number>();
 
     // localStorage and the clock are the view's business, never the simulation's.
     this.profile ??= loadProfile(this.balance, browserStore(), Date.now());
@@ -114,6 +129,7 @@ export class MainScene extends Phaser.Scene {
     this.paintCells();
     this.paintDrill();
     this.followDrill();
+    this.announceLayer(state);
     this.hud.update(state);
     this.domeView.update(state);
 
@@ -155,7 +171,7 @@ export class MainScene extends Phaser.Scene {
       width,
       height,
       depth: LAYER_DEPTH.base,
-      balance: this.balance,
+      balance: this.planBalance(),
       profile,
       harvest,
       onBuy: (upgradeId) => {
@@ -173,7 +189,7 @@ export class MainScene extends Phaser.Scene {
   }
 
   private buy(upgradeId: string): void {
-    const bought = buyUpgrade(this.balance, this.currentProfile(), upgradeId);
+    const bought = buyUpgrade(this.planBalance(), this.currentProfile(), upgradeId);
     if (!bought) {
       return;
     }
@@ -183,8 +199,9 @@ export class MainScene extends Phaser.Scene {
   }
 
   /**
-   * Starts a shift on the balance the upgrades bend, from the checkpoint the
-   * player picked. The seed comes from outside: src/sim never reads a clock.
+   * Starts a shift on the balance of the current five-year plan bent by the
+   * upgrades (src/sim/progress.ts), from the checkpoint the player picked. The
+   * seed comes from outside: src/sim never reads a clock.
    */
   private startShift(startRow: number): void {
     const { width, height } = this.scale.gameSize;
@@ -197,7 +214,7 @@ export class MainScene extends Phaser.Scene {
     this.baseScreen?.destroy();
     this.baseScreen = null;
 
-    const state = createShift(effectiveBalance(this.balance, profile.upgrades), Date.now(), {
+    const state = createShift(shiftBalance(this.balance, profile), Date.now(), {
       startRow,
       autoBank: hasConveyor(profile),
     });
@@ -206,6 +223,9 @@ export class MainScene extends Phaser.Scene {
     this.cellRects = [];
     this.cellPainted = [];
     this.reportShown = false;
+    // The layer the elevator drops the drill into is where the shift begins, not
+    // a border it crossed: it is marked as seen so no banner greets the descent.
+    this.announcedLayers = new Set<number>([drillLayerIndex(state)]);
 
     this.drawShaft();
     this.hud = createHud(this, {
@@ -235,6 +255,45 @@ export class MainScene extends Phaser.Scene {
   private currentProfile(): Profile {
     this.profile ??= loadProfile(this.balance, browserStore(), Date.now());
     return this.profile;
+  }
+
+  /**
+   * The numbers of the five-year plan the player is in: what the base, the report
+   * and the victory screen all read, so the prices, the quota and the figures on
+   * paper are the ones the next shift will actually run on. The upgrades are put
+   * on top of this only inside a shift (`shiftBalance`), because the base has to
+   * show what a level costs, not what it already gives.
+   */
+  private planBalance(): Balance {
+    return planBalance(this.balance, this.currentProfile().fiveYearPlan);
+  }
+
+  /**
+   * The drill has bitten into a layer nobody announced yet: say so once. The
+   * border between layers is where the rock changes colour and a new enemy starts
+   * coming out (PLAN_V1 §5), and this is what tells the player it happened.
+   */
+  private announceLayer(state: ShiftState): void {
+    if (state.phase !== 'running') {
+      return;
+    }
+    const index = drillLayerIndex(state);
+    if (this.announcedLayers.has(index)) {
+      return;
+    }
+    this.announcedLayers.add(index);
+    const layer = state.balance.layers[index];
+    if (!layer) {
+      return;
+    }
+    const { width } = this.scale.gameSize;
+    showLayerBanner(this, {
+      width,
+      top: this.domeHeight + VIEW.layerBanner.topGap,
+      depth: LAYER_DEPTH.banner,
+      index,
+      layer,
+    });
   }
 
   /** One rectangle per cell plus the surface label; colours change later. */
@@ -392,7 +451,9 @@ export class MainScene extends Phaser.Scene {
 
   /**
    * The shift is over: fold it into the profile, save, and show what it brought.
-   * The button leads back to the base, where the earnings are spent.
+   * The button leads back to the base, where the earnings are spent — or, when
+   * the bottom of the Abyss was reached, to the victory screen: first the paper,
+   * then the triumph.
    */
   private showReport(): void {
     const state = this.state;
@@ -402,8 +463,9 @@ export class MainScene extends Phaser.Scene {
     const { width, height } = this.scale.gameSize;
     this.reportShown = true;
 
+    const balance = this.planBalance();
     const report = shiftReport(state);
-    const outcome = applyShiftResult(this.balance, this.currentProfile(), report);
+    const outcome = applyShiftResult(balance, this.currentProfile(), report);
     // The shift itself is time spent in the game, not in the hangar: the stamp
     // moves to now, so the six minutes underground are never paid for offline.
     const saved = touchVisit(outcome.profile, Date.now());
@@ -414,11 +476,37 @@ export class MainScene extends Phaser.Scene {
       width,
       height,
       depth: LAYER_DEPTH.report,
-      maxDepthRow: this.balance.shift.grid_depth,
+      maxDepthRow: balance.shift.grid_depth,
       outcome,
       // A restart wipes the shaft of the finished shift; the profile is a field
       // of the scene and survives it, and it is on disk either way.
       onBack: () => {
+        if (isBottomReached(balance, saved)) {
+          this.showVictory(saved);
+          return;
+        }
+        this.scene.restart();
+      },
+    });
+  }
+
+  /**
+   * The city is found: the plan is closed and the next one starts (PLAN_V1 §5).
+   * The new plan is written to disk the moment the button is tapped, so closing
+   * the page right after the triumph cannot cost it.
+   */
+  private showVictory(profile: Profile): void {
+    const { width, height } = this.scale.gameSize;
+    createVictoryScreen(this, {
+      width,
+      height,
+      depth: LAYER_DEPTH.victory,
+      balance: this.planBalance(),
+      profile,
+      onNextPlan: () => {
+        const next = startNextPlan(profile);
+        this.profile = next;
+        saveProfile(next);
         this.scene.restart();
       },
     });

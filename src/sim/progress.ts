@@ -42,7 +42,7 @@ export interface Profile {
   readonly deepestRow: number;
   /** Scrap handed over in the best shift so far: the quota is a share of it. */
   readonly bestShiftScrap: number;
-  /** Five-year plan number. Grows on victory (task #5); stored from now on. */
+  /** Five-year plan number. Grows when the bottom is reached; sets `planBalance`. */
   readonly fiveYearPlan: number;
   /**
    * When the player was last seen, in milliseconds since the epoch. The hangar
@@ -289,6 +289,83 @@ export function effectiveBalance(balance: Balance, upgrades: UpgradeLevels): Bal
 /** The conveyor: mined scrap goes straight to the bank, the drill never ascends. */
 export function hasConveyor(profile: Profile): boolean {
   return upgradeLevel(profile, CONVEYOR_ID) > 0;
+}
+
+/* ------------------------------------------------------------ five-year plan */
+
+/**
+ * Tier of a five-year plan: how many times the bottom has been reached. The
+ * first plan is tier 0 and multiplies nothing, so the balance measured in
+ * PLAN_V1 §6 is exactly the balance of a new account.
+ */
+export function planTier(fiveYearPlan: number): number {
+  if (!Number.isFinite(fiveYearPlan)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(fiveYearPlan) - 1);
+}
+
+/**
+ * The balance of a five-year plan (PLAN_V1 §5): every plan after the first one
+ * pays `prestige.yield_mult_per_tier` more scrap per cell and sends waves
+ * `prestige.wave_hp_mult_per_tier` tougher, both compounding per tier.
+ *
+ * Only two numbers are bent, and both of them are the ones the plan is a promise
+ * about: the yield of every layer and the base health of an enemy. Hardness,
+ * crystal chance, wave timing and prices stay as they are — a new plan is the
+ * same mine paying better against a heavier siege, not a different game.
+ */
+export function planBalance(balance: Balance, fiveYearPlan: number): Balance {
+  const tier = planTier(fiveYearPlan);
+  if (tier === 0) {
+    return balance;
+  }
+  const yieldMult = balance.prestige.yield_mult_per_tier ** tier;
+  const hpMult = balance.prestige.wave_hp_mult_per_tier ** tier;
+  return {
+    ...balance,
+    layers: balance.layers.map((layer) => ({ ...layer, yield: layer.yield * yieldMult })),
+    waves: { ...balance.waves, enemy_hp_base: balance.waves.enemy_hp_base * hpMult },
+  };
+}
+
+/**
+ * The balance everything about a profile runs on: the numbers of the plan the
+ * player is in, bent by the levels bought.
+ *
+ * The plan goes first and the upgrades on top of it. The two touch disjoint
+ * numbers — the plan bends layer yield and enemy health, the upgrades bend the
+ * drill, the turret, the dome and the cargo — so the order changes no result;
+ * it is fixed here so there is one answer to "what does this shift run on", and
+ * so an upgrade always reads as bending the numbers of the current plan.
+ */
+export function shiftBalance(balance: Balance, profile: Profile): Balance {
+  return effectiveBalance(planBalance(balance, profile.fiveYearPlan), profile.upgrades);
+}
+
+/** The bottom of the Abyss is dug: row `shift.grid_depth` has been reached. */
+export function isBottomReached(balance: Balance, profile: Profile): boolean {
+  return profile.deepestRow >= balance.shift.grid_depth;
+}
+
+/**
+ * The city is found, the plan is closed, the next one starts (PLAN_V1 §5): the
+ * mine is sealed back to the surface and everything the player owns stays.
+ *
+ * `bestShiftScrap` is kept on purpose. It is what the shift quota is a share of,
+ * and nothing earned is ever taken away (PLAN_V1 §2.1): dropping it would hand
+ * the first shift of a new plan the `quota_min` floor and a free premium, while
+ * keeping it means the first shift is measured against real work — and with the
+ * doubled yield the record is beaten again within a shift or two anyway.
+ */
+export function startNextPlan(profile: Profile): Profile {
+  return {
+    ...profile,
+    fiveYearPlan: profile.fiveYearPlan + 1,
+    // The shaft is fresh rock again, so the checkpoints close with it: the depth
+    // is the whole point of a plan and it is what the new one is played for.
+    deepestRow: ENTRANCE_ROW,
+  };
 }
 
 /* ------------------------------------------------------------------- hangar */

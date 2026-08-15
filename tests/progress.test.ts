@@ -16,9 +16,12 @@ import {
   hangarScrapPerHour,
   hasConveyor,
   isCheckpointOpen,
+  isBottomReached,
   isUpgradeMaxed,
   nextUpgrade,
   openCheckpointRows,
+  planBalance,
+  planTier,
   profileFromSaved,
   profileToSaved,
   quotaBonusScrap,
@@ -26,7 +29,9 @@ import {
   resourceIds,
   SAVE_VERSION,
   scrapId,
+  shiftBalance,
   shiftQuota,
+  startNextPlan,
   touchVisit,
   upgradeCost,
   upgradeIds,
@@ -1085,6 +1090,211 @@ describe('touchVisit', () => {
   it('keeps the old stamp when the clock is unreadable', () => {
     const profile = profileWith({ lastVisitMs: HOUR_MS });
     expect(touchVisit(profile, Number.NaN).lastVisitMs).toBe(HOUR_MS);
+  });
+});
+
+/* ------------------------------------------------------------ five-year plan */
+
+describe('planTier', () => {
+  it('counts the first plan as tier zero', () => {
+    expect(planTier(1)).toBe(0);
+    expect(planTier(2)).toBe(1);
+    expect(planTier(5)).toBe(4);
+  });
+
+  it('never goes below zero, whatever a broken save says', () => {
+    for (const value of [0, -3, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(planTier(value)).toBeGreaterThanOrEqual(0);
+    }
+    expect(planTier(2.9)).toBe(1);
+  });
+});
+
+describe('planBalance', () => {
+  it('changes not a single number in the first five-year plan', () => {
+    // The measured balance of PLAN_V1 §6 is the balance of a new account: the
+    // very same object comes back, so nothing can drift.
+    expect(planBalance(balance, 1)).toBe(balance);
+    expect(planBalance(balance, 1)).toEqual(balance);
+  });
+
+  it('multiplies the yield of every layer once per tier', () => {
+    const mult = balance.prestige.yield_mult_per_tier;
+    const second = planBalance(balance, 2);
+    balance.layers.forEach((layer, index) => {
+      expect(second.layers[index]?.yield).toBeCloseTo(layer.yield * mult, 10);
+    });
+    const fourth = planBalance(balance, 4);
+    balance.layers.forEach((layer, index) => {
+      expect(fourth.layers[index]?.yield).toBeCloseTo(layer.yield * mult ** 3, 10);
+    });
+  });
+
+  it('multiplies the base health of an enemy once per tier', () => {
+    const mult = balance.prestige.wave_hp_mult_per_tier;
+    expect(planBalance(balance, 2).waves.enemy_hp_base).toBeCloseTo(
+      balance.waves.enemy_hp_base * mult,
+      10,
+    );
+    expect(planBalance(balance, 3).waves.enemy_hp_base).toBeCloseTo(
+      balance.waves.enemy_hp_base * mult ** 2,
+      10,
+    );
+  });
+
+  it('leaves hardness, crystals, prices and the grid where they were', () => {
+    const second = planBalance(balance, 2);
+    balance.layers.forEach((layer, index) => {
+      expect(second.layers[index]?.hardness_sec).toBe(layer.hardness_sec);
+      expect(second.layers[index]?.crystal_chance).toBe(layer.crystal_chance);
+      expect(second.layers[index]?.enemies).toEqual(layer.enemies);
+    });
+    expect(second.shift).toEqual(balance.shift);
+    expect(second.upgrades).toEqual(balance.upgrades);
+    expect(second.dome).toEqual(balance.dome);
+    expect(second.turret).toEqual(balance.turret);
+    expect(second.drill).toEqual(balance.drill);
+    expect(second.offline).toEqual(balance.offline);
+    // Wave timing is untouched: only the health the waves come with grows.
+    expect({ ...second.waves, enemy_hp_base: balance.waves.enemy_hp_base }).toEqual(balance.waves);
+  });
+
+  it('never touches the balance it was handed', () => {
+    const before = JSON.parse(JSON.stringify(balance));
+    planBalance(balance, 3);
+    expect(JSON.parse(JSON.stringify(balance))).toEqual(before);
+  });
+});
+
+describe('shiftBalance', () => {
+  it('is the plain balance for a fresh account', () => {
+    expect(shiftBalance(balance, createProfile(balance))).toEqual(balance);
+  });
+
+  it('puts the upgrades on top of the plan, and both are felt', () => {
+    const profile = profileWith({ fiveYearPlan: 3, upgrades: { [DRILL]: 2, [CARGO]: 1 } });
+    const combined = shiftBalance(balance, profile);
+    const yieldMult = balance.prestige.yield_mult_per_tier ** 2;
+    expect(combined.layers[0]?.yield).toBeCloseTo((balance.layers[0]?.yield ?? 0) * yieldMult, 10);
+    expect(combined.waves.enemy_hp_base).toBeCloseTo(
+      balance.waves.enemy_hp_base * balance.prestige.wave_hp_mult_per_tier ** 2,
+      10,
+    );
+    expect(combined.drill.speed_base).toBeCloseTo(
+      balance.drill.speed_base * (1 + item(DRILL).step * 2),
+      10,
+    );
+    expect(combined.cargo.capacity_base).toBeCloseTo(
+      balance.cargo.capacity_base * (1 + item(CARGO).step),
+      10,
+    );
+  });
+
+  it('gives the same numbers whichever way round the two are applied', () => {
+    const profile = profileWith({ fiveYearPlan: 4, upgrades: { [DRILL]: 3, [DOME]: 2, [SALVO]: 4 } });
+    const planFirst = shiftBalance(balance, profile);
+    const upgradesFirst = planBalance(effectiveBalance(balance, profile.upgrades), profile.fiveYearPlan);
+    expect(planFirst).toEqual(upgradesFirst);
+  });
+});
+
+describe('isBottomReached', () => {
+  it('is false until the deepest row of the mine is dug', () => {
+    for (const row of [0, 1, 15, balance.shift.grid_depth - 1]) {
+      expect(isBottomReached(balance, profileWith({ deepestRow: row }))).toBe(false);
+    }
+  });
+
+  it('is true on the bottom row itself', () => {
+    expect(isBottomReached(balance, profileWith({ deepestRow: balance.shift.grid_depth }))).toBe(true);
+  });
+
+  it('reads the bottom from balance, not from a number in the code', () => {
+    const shallow: Balance = { ...balance, shift: { ...balance.shift, grid_depth: 12 } };
+    expect(isBottomReached(shallow, profileWith({ deepestRow: 12 }))).toBe(true);
+    expect(isBottomReached(shallow, profileWith({ deepestRow: 11 }))).toBe(false);
+  });
+
+  it('follows the depth a finished shift wrote into the profile', () => {
+    const profile = profileWith({ deepestRow: balance.shift.grid_depth - 1 });
+    expect(isBottomReached(balance, profile)).toBe(false);
+    const outcome = applyShiftResult(
+      balance,
+      profile,
+      report({ banked: 100, deepestRow: balance.shift.grid_depth }),
+    );
+    expect(isBottomReached(balance, outcome.profile)).toBe(true);
+  });
+});
+
+describe('startNextPlan', () => {
+  const closed = profileWith({
+    wallet: { [SCRAP]: 4200, [CRYSTAL]: 17 },
+    upgrades: { [DRILL]: 6, [TURRET]: 4, [DOME]: 5, [CARGO]: 3, [SALVO]: 8, [CONVEYOR]: 1 },
+    deepestRow: 30,
+    bestShiftScrap: 1800,
+    fiveYearPlan: 1,
+    lastVisitMs: HOUR_MS * 9,
+  });
+
+  it('counts the next five-year plan', () => {
+    expect(startNextPlan(closed).fiveYearPlan).toBe(2);
+    expect(startNextPlan(startNextPlan(closed)).fiveYearPlan).toBe(3);
+  });
+
+  it('takes away neither scrap, nor crystals, nor a bought level (PLAN_V1 §2.1)', () => {
+    const next = startNextPlan(closed);
+    expect(walletAmount(next, SCRAP)).toBe(4200);
+    expect(walletAmount(next, CRYSTAL)).toBe(17);
+    expect(next.upgrades).toEqual(closed.upgrades);
+    expect(hasConveyor(next)).toBe(true);
+  });
+
+  it('seals the shaft: the depth starts from the surface again', () => {
+    const next = startNextPlan(closed);
+    expect(next.deepestRow).toBe(ENTRANCE_ROW);
+    expect(openCheckpointRows(balance, next)).toEqual([ENTRANCE_ROW]);
+    expect(deepestOpenCheckpoint(balance, next)).toBe(ENTRANCE_ROW);
+    expect(isBottomReached(balance, next)).toBe(false);
+  });
+
+  it('keeps the shift record, so the quota is still measured against real work', () => {
+    const next = startNextPlan(closed);
+    expect(next.bestShiftScrap).toBe(closed.bestShiftScrap);
+    expect(shiftQuota(balance, next)).toBe(shiftQuota(balance, closed));
+  });
+
+  it('leaves the visit stamp alone: the clock is not its business', () => {
+    expect(startNextPlan(closed).lastVisitMs).toBe(closed.lastVisitMs);
+  });
+
+  it('pays the reset depth nothing offline until the new plan digs again', () => {
+    const next = startNextPlan(closed);
+    expect(hangarHarvest(balance, next, closed.lastVisitMs + HOUR_MS * 3).scrap).toBe(0);
+  });
+
+  it('makes the ore richer and the waves tougher from the next shift on', () => {
+    const next = startNextPlan(closed);
+    const before = shiftBalance(balance, closed);
+    const after = shiftBalance(balance, next);
+    expect(after.layers[0]?.yield).toBeCloseTo(
+      (before.layers[0]?.yield ?? 0) * balance.prestige.yield_mult_per_tier,
+      10,
+    );
+    expect(after.waves.enemy_hp_base).toBeCloseTo(
+      before.waves.enemy_hp_base * balance.prestige.wave_hp_mult_per_tier,
+      10,
+    );
+  });
+
+  it('survives a save and a load with the plan number intact', () => {
+    const next = startNextPlan(closed);
+    const loaded = profileFromSaved(balance, JSON.parse(JSON.stringify(profileToSaved(next))), 0);
+    expect(loaded?.fiveYearPlan).toBe(2);
+    expect(loaded?.deepestRow).toBe(ENTRANCE_ROW);
+    expect(loaded?.upgrades).toEqual(next.upgrades);
+    expect(walletAmount(loaded as Profile, SCRAP)).toBe(4200);
+    expect(shiftBalance(balance, loaded as Profile)).toEqual(shiftBalance(balance, next));
   });
 });
 
