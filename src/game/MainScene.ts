@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { Balance } from '../sim/balance.js';
-import { layerIndexForRow } from '../sim/mining.js';
+import { layerIndexForRow, cellYield } from '../sim/mining.js';
+import { isDomeWarning, turretTarget } from '../sim/defense.js';
 import {
   applyShiftResult,
   buyUpgrade,
@@ -39,6 +40,8 @@ import { createVictoryScreen } from '../ui/victoryScreen.js';
 import { createDomeView, type DomeView } from './domeView.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from './layout.js';
 import { browserStore, loadProfile, saveProfile } from './saveStorage.js';
+import { SFX } from './sfx.js';
+import { showFloatText } from '../ui/floatText.js';
 
 /** Depth order of the drawn parts. */
 const LAYER_DEPTH = {
@@ -56,6 +59,13 @@ const LAYER_DEPTH = {
   hangar: 40,
   victory: 50,
 } as const;
+
+/** How often the turret pews while it is firing, in seconds. View tuning. */
+const TURRET_BEAT_SEC = 0.32;
+/** How often the warning siren wails while the dome is on the edge. */
+const SIREN_BEAT_SEC = 1.0;
+/** View tuning for the floating reward and the crack/dig particles. */
+const FLOAT_DEPTH = 6;
 
 /**
  * The loop of the game: base → shift → report → base. The base screen and the
@@ -93,6 +103,30 @@ export class MainScene extends Phaser.Scene {
    */
   private announcedLayers = new Set<number>();
 
+  /**
+   * Cross-frame memory for the effect triggers. Nothing here decides gameplay —
+   * it only spots the transition in the view (issue #7):
+   *   - dome hp falling        → dome hit (sound, shake, vibration, flash)
+   *   - an enemy disappearing  → a kill (shake on the big ones)
+   *   - banked rising          → cargo handed over (sound)
+   *   - crystals rising        → a crystal dropped out of a dig
+   *   - salvo fired            → salvo (sound, shake)
+   *   - turret target alive    → turret fire cadence
+   *   - dome warning           → siren on a slow pulse
+   */
+  private prevDomeHp = 0;
+  private prevBanked = 0;
+  private prevCrystals = 0;
+  private prevEnemyHp = new Map<number, { hp: number; type: string }>();
+  private turretTick = 0;
+  private sirenTick = 0;
+  private prevWarning = false;
+  /** The crack overlay drawn over the cell being dug. */
+  private cracks!: Phaser.GameObjects.Graphics;
+
+  /** Sound starts only on a user gesture: unlock on the first tap anywhere. */
+  private unlocked = false;
+
   constructor(balance: Balance) {
     super('main');
     this.balance = balance;
@@ -126,6 +160,7 @@ export class MainScene extends Phaser.Scene {
       return;
     }
     step(state, deltaMs / 1000);
+    this.detectShiftEvents(state, deltaMs);
     this.paintCells();
     this.paintDrill();
     this.followDrill();
@@ -136,6 +171,106 @@ export class MainScene extends Phaser.Scene {
     if (state.phase === 'finished' && !this.reportShown) {
       this.showReport();
     }
+  }
+
+  /**
+   * Spots the transitions that sound, shake and vibrate respond to, by comparing
+   * the frame before with the frame after. This is view-only: it reads the state
+   * `step` just produced and never tells the simulation anything (issue #7).
+   */
+  private detectShiftEvents(state: ShiftState, deltaMs: number): void {
+    const defense = state.defense;
+    const dt = deltaMs / 1000;
+
+    // Once the shift is over the trackers are reset so a restart cannot fire
+    // effects from the previous shift as though they happened now.
+    if (state.phase !== 'running') {
+      this.prevEnemyHp.clear();
+      this.prevDomeHp = defense.hp;
+      this.prevBanked = state.banked;
+      this.prevCrystals = state.crystals;
+      this.prevWarning = false;
+      this.sirenTick = 0;
+      this.turretTick = 0;
+      return;
+    }
+
+    // Dome hit: an enemy reached the shell and took health away this frame.
+    const domeHit = defense.hp < this.prevDomeHp - 0.001;
+    if (domeHit) {
+      SFX.domeHit();
+      SFX.vibrate(50);
+      this.domeView.flashDome();
+      this.shake(0.012, 260);
+    }
+    this.prevDomeHp = defense.hp;
+
+    // Cargo handed over: the banked figure moved (manual elevator or conveyor).
+    if (state.banked > this.prevBanked) {
+      SFX.bank();
+    }
+    this.prevBanked = state.banked;
+
+    // A kill: an enemy vanished while no enemy bit the dome for it. Only the
+    // big ones (drowned, moth) shake the screen — the aberration swarm is too
+    // frequent to jolt on.
+    const live = new Map<number, number>();
+    for (const enemy of defense.enemies) {
+      live.set(enemy.id, enemy.hp);
+    }
+    for (const [id, record] of this.prevEnemyHp) {
+      if (live.has(id)) {
+        continue;
+      }
+      if (record.hp <= 0.001) {
+        continue;
+      }
+      if (domeHit) {
+        // It reached the dome and did its damage; the dome hit already spoke.
+        continue;
+      }
+      if (record.type === 'drowned' || record.type === 'moth') {
+        this.shake(0.008, 220);
+      }
+    }
+    this.prevEnemyHp.clear();
+    for (const enemy of defense.enemies) {
+      this.prevEnemyHp.set(enemy.id, { hp: enemy.hp, type: enemy.type });
+    }
+
+    // Turret fire: while the turret has a target, a short pew on a steady beat.
+    if (turretTarget(defense)) {
+      this.turretTick += dt;
+      if (this.turretTick >= TURRET_BEAT_SEC) {
+        this.turretTick = 0;
+        SFX.turret();
+      }
+    } else {
+      this.turretTick = 0;
+    }
+
+    // Siren: the dome is on the edge — a two-tone wail on a slow pulse, with a
+    // prickling vibration each time it warns.
+    const warning = isDomeWarning(state.balance, defense);
+    if (warning && !this.prevWarning) {
+      this.sirenTick = 0;
+    }
+    if (warning) {
+      this.sirenTick += dt;
+      if (this.sirenTick >= SIREN_BEAT_SEC) {
+        this.sirenTick = 0;
+        SFX.siren();
+        SFX.vibrate([200, 80, 200]);
+      }
+    } else {
+      this.sirenTick = 0;
+    }
+    this.prevWarning = warning;
+  }
+
+  /** A quick shake of the combat camera; higher intensity = more violent. */
+  private shake(intensity: number, duration: number): void {
+    this.cameras.main.shake(duration, intensity);
   }
 
   /**
@@ -226,6 +361,15 @@ export class MainScene extends Phaser.Scene {
     // The layer the elevator drops the drill into is where the shift begins, not
     // a border it crossed: it is marked as seen so no banner greets the descent.
     this.announcedLayers = new Set<number>([drillLayerIndex(state)]);
+    // Forget the last shift's effect trackers: a restart must not read the old
+    // dome/enemies/bank of the previous shift as fresh events.
+    this.prevDomeHp = state.defense.hp;
+    this.prevBanked = state.banked;
+    this.prevCrystals = state.crystals;
+    this.prevEnemyHp.clear();
+    this.prevWarning = false;
+    this.sirenTick = 0;
+    this.turretTick = 0;
 
     this.drawShaft();
     this.hud = createHud(this, {
@@ -236,7 +380,11 @@ export class MainScene extends Phaser.Scene {
         callElevator(state);
       },
       onSalvo: () => {
-        fireSalvo(state);
+        // Salvo only fires when it is ready; the sound and jolt go with the blast.
+        if (fireSalvo(state)) {
+          SFX.salvo();
+          this.shake(0.02, 420);
+        }
       },
     });
     this.domeView = createDomeView(this, {
@@ -247,6 +395,13 @@ export class MainScene extends Phaser.Scene {
     });
 
     this.input.on(Phaser.Input.Events.POINTER_DOWN, this.onTap, this);
+    // Web Audio needs a user gesture: the first tap anywhere unlocks it.
+    this.input.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      if (!this.unlocked) {
+        this.unlocked = true;
+        SFX.unlock();
+      }
+    });
     this.followDrill();
     this.hud.update(state);
     this.domeView.update(state);
@@ -343,6 +498,10 @@ export class MainScene extends Phaser.Scene {
       .setDepth(LAYER_DEPTH.progress)
       .setVisible(false);
 
+    // The cracks overlay: jagged lines drawn on the cell being dug, fading in
+    // with the dig progress. Its lines are cleared and repainted every frame.
+    this.cracks = this.add.graphics().setDepth(LAYER_DEPTH.progress);
+
     const drillSize = size * VIEW.drillSizeShare;
     this.drill = this.add
       .rectangle(0, 0, drillSize, drillSize, COLORS.drill)
@@ -364,6 +523,7 @@ export class MainScene extends Phaser.Scene {
         if (this.cellPainted[index] === dug) {
           continue;
         }
+        const wasRock = this.cellPainted[index] === false;
         const rect = this.cellRects[index];
         if (!rect) {
           continue;
@@ -371,6 +531,10 @@ export class MainScene extends Phaser.Scene {
         if (dug) {
           rect.fillColor = row === ENTRANCE_ROW ? COLORS.surface : COLORS.dug;
           rect.setStrokeStyle(1, COLORS.dugEdge);
+          // A rock that just opened is a finished dig: reward it out loud.
+          if (wasRock) {
+            this.onCellDug(row, col);
+          }
         } else {
           rect.fillColor = rockColor;
           rect.setStrokeStyle(0);
@@ -400,6 +564,7 @@ export class MainScene extends Phaser.Scene {
     this.target.setVisible(digging);
     this.progress.setVisible(digging);
     if (!digging || !target) {
+      this.cracks.clear();
       return;
     }
     const gap = VIEW.cellGap;
@@ -409,6 +574,86 @@ export class MainScene extends Phaser.Scene {
       (target.row + 1) * size - gap / 2 - size * VIEW.digBarHeightShare,
     );
     this.progress.width = (size - gap) * digProgress(state);
+    this.drawCracks(target.col, target.row, size, gap, digProgress(state));
+  }
+
+  /**
+   * Jagged lines across the rock being dug, fading in with the progress: the
+   * stone itself gives way, not just the bar under it. Cheap — the lines for the
+   * single active cell are cleared and redrawn every frame.
+   */
+  private drawCracks(col: number, row: number, size: number, gap: number, share: number): void {
+    const g = this.cracks;
+    g.clear();
+    g.lineStyle(2, COLORS.progress, Math.min(1, 0.15 + share * 0.7));
+    const x0 = col * size + gap / 2;
+    const y0 = row * size + gap / 2;
+    const w = size - gap;
+    // Three short strokes across the cell; their positions drift with progress
+    // so the crack looks like it spreads as the drill works.
+    const center = Math.min(0.85, Math.max(0.15, share));
+    g.lineBetween(x0 + w * 0.3, y0, x0 + w * center, y0 + w * 0.5);
+    g.lineBetween(x0 + w * center, y0 + w * 0.5, x0 + w * 0.2, y0 + w);
+    g.lineBetween(x0 + w * 0.6, y0 + w * 0.3, x0 + w * 0.9, y0 + w * 0.7);
+    g.lineBetween(x0 + w * 0.15, y0 + w * 0.4, x0 + w * 0.7, y0 + w * 0.85);
+  }
+
+  /**
+   * A cell just opened: reward it with the crack of the drill, a floating
+   * «+scrap» (and «+1 crystal» when one dropped), and a burst of chips. All
+   * view-only — the simulation has already finished the dig and moved on.
+   */
+  private onCellDug(row: number, col: number): void {
+    const state = this.state;
+    if (!state) {
+      return;
+    }
+    const size = this.cellSize;
+    const cx = (col + 0.5) * size;
+    const cy = (row + 0.5) * size;
+
+    SFX.dig();
+    this.burstParticles(cx, cy, size);
+
+    const scrap = cellYield(state.balance.layers, row);
+    showFloatText(this, cx, cy, `+${scrap}`, COLORS.scrap, FLOAT_DEPTH);
+
+    // A crystal dropped this dig: say so, in its own colour, on the same cell.
+    if (state.crystals > this.prevCrystals) {
+      showFloatText(this, cx, cy + size * 0.3, '+1 ✦', COLORS.crystal, FLOAT_DEPTH);
+      this.prevCrystals = state.crystals;
+    }
+    this.prevCrystals = state.crystals;
+  }
+
+  /** A short spray of chips where the rock broke, gone in a third of a second. */
+  private burstParticles(cx: number, cy: number, size: number): void {
+    const count = 6;
+    for (let i = 0; i < count; i += 1) {
+      const chip = this.add
+        .rectangle(
+          cx + (Math.random() - 0.5) * size * 0.5,
+          cy + (Math.random() - 0.5) * size * 0.5,
+          size * (0.08 + Math.random() * 0.08),
+          size * (0.08 + Math.random() * 0.08),
+          Math.random() < 0.3 ? COLORS.scrap : COLORS.progress,
+        )
+        .setDepth(FLOAT_DEPTH);
+      const angle = Math.random() * Math.PI * 2;
+      const dist = size * (0.3 + Math.random() * 0.6);
+      this.tweens.add({
+        targets: chip,
+        x: chip.x + Math.cos(angle) * dist,
+        y: chip.y + Math.sin(angle) * dist,
+        alpha: 0,
+        angle: Math.random() * 180 - 90,
+        duration: 280 + Math.random() * 140,
+        ease: Phaser.Math.Easing.Quadratic.Out,
+        onComplete: () => {
+          chip.destroy();
+        },
+      });
+    }
   }
 
   /** Camera keeps the drill in the middle of the shaft zone, below the dome. */
@@ -481,6 +726,7 @@ export class MainScene extends Phaser.Scene {
       // A restart wipes the shaft of the finished shift; the profile is a field
       // of the scene and survives it, and it is on disk either way.
       onBack: () => {
+        SFX.unlock();
         if (isBottomReached(balance, saved)) {
           this.showVictory(saved);
           return;

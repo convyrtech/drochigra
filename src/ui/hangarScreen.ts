@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
+import { SFX } from '../game/sfx.js';
 import type { Balance } from '../sim/balance.js';
 import { resourceName, scrapId, type HangarHarvest } from '../sim/progress.js';
 
@@ -124,6 +125,9 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
     button.disableInteractive();
     breathe.stop();
     amount.setScale(1);
+    // Taking the pile is a gesture: unlock the context and ring it in.
+    SFX.unlock();
+    SFX.hangarCollect();
 
     // The panel takes the hit and the number flies out of it: the payment is
     // something that happens, not a screen that quietly disappears.

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
+import { SFX } from '../game/sfx.js';
 import type { Balance } from '../sim/balance.js';
 import {
   canBuyUpgrade,
@@ -85,6 +86,33 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   // Both are short, so nothing has to move to fit them on one line.
   const planNumber = leftText(scene, base.margin, base.planY, '', font.small, COLORS.buttonEdge);
   const plan = rightText(scene, width - base.margin, base.planY, '', font.small, COLORS.textDim);
+
+  // Sound toggle in the top-right corner of the header: it flips the Web Audio
+  // master and remembers the choice in its own localStorage key.
+  const mute = scene.add
+    .rectangle(width - base.margin - base.muteWidth, base.muteY, base.muteWidth, base.muteHeight, COLORS.panel)
+    .setOrigin(0, 0)
+    .setStrokeStyle(2, COLORS.buttonEdge)
+    .setInteractive({ useHandCursor: true });
+  const muteLabel = scene.add
+    .text(
+      width - base.margin - base.muteWidth / 2,
+      base.muteY + base.muteHeight / 2,
+      '',
+      { fontFamily: FONT_FAMILY, fontSize: font.tiny, color: cssColor(COLORS.text) },
+    )
+    .setOrigin(0.5, 0.5);
+  const paintMute = (): void => {
+    const muted = SFX.isMuted();
+    muteLabel.setText(muted ? 'ЗВУК: ВЫКЛ' : 'ЗВУК: ВКЛ');
+    muteLabel.setColor(cssColor(muted ? COLORS.textDim : COLORS.text));
+  };
+  mute.on(Phaser.Input.Events.POINTER_DOWN, () => {
+    SFX.setMuted(!SFX.isMuted());
+    SFX.unlock();
+    paintMute();
+  });
+  paintMute();
 
   const upgradeRows = upgradeIds(balance).map((id, index) =>
     createUpgradeRow(scene, {
@@ -173,6 +201,8 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     wallet,
     planNumber,
     plan,
+    mute,
+    muteLabel,
     ...upgradeRows.flatMap((row) => [...row.parts]),
     depthTitle,
     ...chips.flatMap((chip) => [...chip.parts]),
@@ -186,8 +216,41 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     part.setScrollFactor(0).setDepth(depth);
   }
 
+  // The wallet counts from what is on the label to the new figure, so a buy (or
+  // a bank) visibly runs toward its value instead of snapping. Only the label
+  // moves; the profile the rest of the screen reads is already the final one.
+  const resourceList = resourceIds(balance);
+  let displayed = new Map(resourceList.map((id) => [id, walletAmount(profile, id)]));
+  const WALLET_COUNT_MS = 600;
+
+  function walletLineFrom(amounts: Map<string, number>): string {
+    return resourceList
+      .map((id) => `${resourceName(balance, id).toUpperCase()}: ${amounts.get(id) ?? 0}`)
+      .join(' · ');
+  }
+
+  function animateWallet(target: Profile): void {
+    const to = resourceList.map((id) => walletAmount(target, id));
+    const from = resourceList.map((id) => displayed.get(id) ?? 0);
+    const start = scene.time.now;
+    const step = (): void => {
+      const t = Math.min(1, (scene.time.now - start) / WALLET_COUNT_MS);
+      const eased = 1 - Math.pow(1 - t, 3);
+      resourceList.forEach((id, i) => {
+        const fromValue = from[i] ?? 0;
+        const toValue = to[i] ?? 0;
+        displayed.set(id, Math.round(fromValue + (toValue - fromValue) * eased));
+      });
+      wallet.setText(walletLineFrom(displayed));
+      if (t < 1) {
+        scene.time.delayedCall(16, step);
+      }
+    };
+    step();
+  }
+
   function repaint(): void {
-    wallet.setText(walletLine(balance, profile));
+    animateWallet(profile);
     planNumber.setText(`ПЯТИЛЕТКА ${profile.fiveYearPlan}`);
     plan.setText(`НОРМА СМЕНЫ: ${shiftQuota(balance, profile)}`);
     for (const row of upgradeRows) {
@@ -234,13 +297,6 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
       }
     },
   };
-}
-
-/** «ЛОМ: 1200 · КРИСТАЛЛ: 4» — resource names come from balance.json. */
-function walletLine(balance: Balance, profile: Profile): string {
-  return resourceIds(balance)
-    .map((id) => `${resourceName(balance, id).toUpperCase()}: ${walletAmount(profile, id)}`)
-    .join(' · ');
 }
 
 interface UpgradeRowOptions {

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
+import { SFX } from '../game/sfx.js';
 import type { Balance } from '../sim/balance.js';
 import {
   resourceIds,
@@ -156,6 +157,11 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
   for (const part of parts) {
     part.setScrollFactor(0).setDepth(depth);
   }
+
+  // The triumph rings: a rising fanfare and a long pulse on devices that vibrate.
+  SFX.unlock();
+  SFX.victory();
+  SFX.vibrate(400);
 
   // The paper comes in from below, the way the report does not: this screen is
   // the reward, so it moves.

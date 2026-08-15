@@ -114,6 +114,13 @@ export const VIEW = {
     planY: 126,
     /** Top of the upgrade list. Everything below it is measured from the rows. */
     listTop: 168,
+    /**
+     * The sound toggle, tucked into the top-right corner of the header where no
+     * text reaches: the title is centred, the plan row is lower down.
+     */
+    muteWidth: 160,
+    muteHeight: 54,
+    muteY: 14,
     rowHeight: 86,
     rowGap: 6,
     rowPad: 18,

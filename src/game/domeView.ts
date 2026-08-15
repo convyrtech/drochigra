@@ -19,6 +19,8 @@ export interface DomeView {
    * everything here is pinned with scrollFactor 0.
    */
   readonly pickEnemy: (x: number, y: number) => number | null;
+  /** Flash the whole shell — the dome just took a hit. */
+  readonly flashDome: () => void;
 }
 
 export interface DomeViewOptions {
@@ -49,6 +51,14 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
   /** Where each enemy was drawn last frame: taps are matched against this. */
   let spots: Spot[] = [];
 
+  /** Seconds of white flash left on an enemy that just took a hit. */
+  const enemyFlash = new Map<number, number>();
+  /** The previous frame's hp per enemy, to spot a hit between frames. */
+  const lastHp = new Map<number, number>();
+  /** Seconds of bright shell left after the dome took a hit. */
+  let domeFlashSec = 0;
+  const FLASH_SEC = 0.12;
+
   function enemySpot(enemy: Enemy): Spot {
     // Sides alternate slot by slot, so every other slot walks the same edge.
     const slotOnSide = Math.floor(enemy.slot / 2);
@@ -73,6 +83,19 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
       fight.clear();
       spots = defense.enemies.map(enemySpot);
 
+      const dt = scene.game.loop.delta / 1000;
+      for (const [id, sec] of [...enemyFlash]) {
+        const next = sec - dt;
+        if (next <= 0) {
+          enemyFlash.delete(id);
+        } else {
+          enemyFlash.set(id, next);
+        }
+      }
+      if (domeFlashSec > 0) {
+        domeFlashSec = Math.max(0, domeFlashSec - dt);
+      }
+
       const target = turretTarget(defense);
       for (let i = 0; i < defense.enemies.length; i += 1) {
         const enemy = defense.enemies[i];
@@ -80,7 +103,12 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
         if (!enemy || !spot) {
           continue;
         }
-        drawEnemy(fight, enemy, spot);
+        const prevHp = lastHp.get(enemy.id);
+        if (prevHp !== undefined && enemy.hp < prevHp - 0.001) {
+          enemyFlash.set(enemy.id, FLASH_SEC);
+        }
+        lastHp.set(enemy.id, enemy.hp);
+        drawEnemy(fight, enemy, spot, enemyFlash.has(enemy.id), domeFlashSec > 0);
         if (enemy.id === defense.focusId) {
           fight.lineStyle(3, COLORS.target, 1);
           fight.strokeCircle(spot.x, spot.y, dome.targetRingRadius);
@@ -89,6 +117,18 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
           fight.lineStyle(dome.beamWidth, COLORS.progress, 0.85);
           fight.lineBetween(centerX, dome.apexY, spot.x, spot.y);
         }
+      }
+      // Enemies that left the screen must not keep stale hp to compare against.
+      const liveIds = new Set(defense.enemies.map((enemy) => enemy.id));
+      for (const id of [...lastHp.keys()]) {
+        if (!liveIds.has(id)) {
+          lastHp.delete(id);
+          enemyFlash.delete(id);
+        }
+      }
+
+      if (domeFlashSec > 0) {
+        drawShell(shell, centerX, true);
       }
 
       frame.clear();
@@ -118,11 +158,15 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
       }
       return bestId;
     },
+
+    flashDome(): void {
+      domeFlashSec = FLASH_SEC;
+    },
   };
 }
 
 /** The shell is a shallow arc: it never moves, so it is drawn once. */
-function drawShell(shell: Phaser.GameObjects.Graphics, centerX: number): void {
+function drawShell(shell: Phaser.GameObjects.Graphics, centerX: number, highlight = false): void {
   const dome = VIEW.dome;
   const points: Phaser.Math.Vector2[] = [];
   for (let i = 0; i <= dome.arcSteps; i += 1) {
@@ -132,10 +176,19 @@ function drawShell(shell: Phaser.GameObjects.Graphics, centerX: number): void {
     points.push(new Phaser.Math.Vector2(x, dome.apexY + (dome.baseY - dome.apexY) * fromCenter ** 2));
   }
 
-  shell.fillStyle(COLORS.domeEdge, 0.16);
-  shell.fillPoints(points, true, true);
-  shell.lineStyle(3, COLORS.domeEdge, 1);
-  shell.strokePoints(points, false, false);
+  // A flash redraws from scratch so the echo of the old fill never builds up.
+  if (highlight) {
+    shell.clear();
+    shell.fillStyle(COLORS.warning, 0.5);
+    shell.fillPoints(points, true, true);
+    shell.lineStyle(4, COLORS.warning, 0.9);
+    shell.strokePoints(points, false, false);
+  } else {
+    shell.fillStyle(COLORS.domeEdge, 0.16);
+    shell.fillPoints(points, true, true);
+    shell.lineStyle(3, COLORS.domeEdge, 1);
+    shell.strokePoints(points, false, false);
+  }
 
   shell.fillStyle(COLORS.drill, 1);
   shell.fillRect(
@@ -146,12 +199,39 @@ function drawShell(shell: Phaser.GameObjects.Graphics, centerX: number): void {
   );
 }
 
-function drawEnemy(fight: Phaser.GameObjects.Graphics, enemy: Enemy, spot: Spot): void {
+/** Lighten a colour towards a hit-flash tint, mixing `amount` in [0,1]. */
+function flashColor(color: number, tint: number, amount: number): number {
+  const cr = (color >> 16) & 0xff;
+  const cg = (color >> 8) & 0xff;
+  const cb = color & 0xff;
+  const tr = (tint >> 16) & 0xff;
+  const tg = (tint >> 8) & 0xff;
+  const tb = tint & 0xff;
+  const r = Math.round(cr + (tr - cr) * amount);
+  const g = Math.round(cg + (tg - cg) * amount);
+  const b = Math.round(cb + (tb - cb) * amount);
+  return (r << 16) | (g << 8) | b;
+}
+
+function drawEnemy(
+  fight: Phaser.GameObjects.Graphics,
+  enemy: Enemy,
+  spot: Spot,
+  hitFlash: boolean,
+  domeFlash: boolean,
+): void {
   const dome = VIEW.dome;
   const style = ENEMY_STYLE[enemy.type] ?? ENEMY_STYLE_FALLBACK;
   const { x, y } = spot;
+  // A hit bleaches the enemy to white; a dome hit bleaches every enemy a little.
+  let color = style.color;
+  if (hitFlash) {
+    color = flashColor(color, 0xffffff, 0.85);
+  } else if (domeFlash) {
+    color = flashColor(color, 0xffffff, 0.35);
+  }
 
-  fight.fillStyle(style.color, 1);
+  fight.fillStyle(color, 1);
   switch (style.shape) {
     case 'circle':
       fight.fillCircle(x, y, style.size);
