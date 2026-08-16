@@ -2,6 +2,14 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Telegram Mini App: the official client script. It must run before the
+      game module so window.Telegram.WebApp is ready when src/main.ts starts.
+      First in <head> as required. If it cannot load (no network / blocker),
+      window.Telegram stays undefined and src/game/tg.ts degrades to a no-op,
+      so the game still runs exactly as before in a plain browser.
+    -->
+    <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
@@ -30,15 +38,34 @@
         align-items: center;
         justify-content: center;
         /*
-         * Safe-area (issue #8): reserve room under the camera notch and the
-         * system gesture/nav bar. The canvas is FIT-scaled and centred inside
-         * this padded box (CENTER_BOTH), so its bottom edge — where НАЧАТЬ
-         * СМЕНУ and the hangar bar sit — never reaches the system bars. The
-         * viewport meta has viewport-fit=cover, which is what makes env()'s
-         * safe-area-inset-* report non-zero on devices with a notch.
+         * Safe-area (issue #8 + Telegram Mini App): reserve room under the
+         * camera notch / system bars via env(safe-area-inset-*) and, when the
+         * game runs as a Telegram Mini App, under Telegram's own chrome (the
+         * expanded header and the bottom action bar) via
+         * --tg-content-safe-area-inset-*. Outside Telegram the --tg-* variables
+         * are undefined, fall back to 0px, and the padding reduces to the plain
+         * env() the game always had — so the web build looks exactly as before.
+         * The canvas is FIT-scaled and centred inside this padded box
+         * (CENTER_BOTH), so its bottom edge — where НАЧАТЬ СМЕНУ and the hangar
+         * bar sit — never reaches the system bars or Telegram's overlay panels.
+         * max() needs like units; env() and the var() fallback both resolve to
+         * px. The viewport meta has viewport-fit=cover, which is what makes
+         * env()'s safe-area-inset-* report non-zero on devices with a notch.
          */
-        padding: max(env(safe-area-inset-top), 0px) max(env(safe-area-inset-right), 0px)
-          max(env(safe-area-inset-bottom), 0px) max(env(safe-area-inset-left), 0px);
+        --safe-top: max(env(safe-area-inset-top), var(--tg-content-safe-area-inset-top, 0px));
+        --safe-right: max(
+          env(safe-area-inset-right),
+          var(--tg-content-safe-area-inset-right, 0px)
+        );
+        --safe-bottom: max(
+          env(safe-area-inset-bottom),
+          var(--tg-content-safe-area-inset-bottom, 0px)
+        );
+        --safe-left: max(
+          env(safe-area-inset-left),
+          var(--tg-content-safe-area-inset-left, 0px)
+        );
+        padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
         box-sizing: border-box;
       }
 

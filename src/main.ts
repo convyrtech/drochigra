@@ -1,11 +1,17 @@
 import { createGame } from './game/createGame.js';
 import { loadBalance } from './game/loadBalance.js';
+import { initTg, applyTgTheme, isTelegram } from './game/tg.js';
 
 const PARENT_ID = 'game';
 /** Phone-ish: the smaller screen edge under this is a handheld device. */
 const MOBILE_EDGE_PX = 600;
 
 async function start(): Promise<void> {
+  // Telegram Mini App: ready() hides the placeholder and full-screens on the
+  // first tap. Both are no-ops when not inside Telegram, so a plain browser,
+  // local dev server and GitHub Pages keep working unchanged.
+  initTg();
+  applyTgTheme();
   const balance = await loadBalance();
   createGame(PARENT_ID, balance);
 }
@@ -19,6 +25,12 @@ async function start(): Promise<void> {
  */
 function setupOrientation(): void {
   const lock = (): void => {
+    // Inside Telegram the WebView takes over orientation/fullscreen on the
+    // first tap (src/game/tg.ts), so locking the native orientation here as
+    // well would fight it. Outside Telegram this stays the only lock, as before.
+    if (isTelegram()) {
+      return;
+    }
     const orientation =
       'orientation' in screen && screen.orientation ? screen.orientation : null;
     if (!orientation || typeof orientation.lock !== 'function') {
