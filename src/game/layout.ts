@@ -28,6 +28,28 @@ export const VIEW = {
   drillSizeShare: 0.62,
   /** Height of the dig progress bar as a share of a cell. */
   digBarHeightShare: 0.16,
+  /**
+   * Shaft scrolling (issue #10, PLAN_V1 §3): a finger that travels this far on
+   * either axis is a swipe, not a tap. It is a view number, not a game one —
+   * it decides how a gesture is read, never what the mine is worth. Keep it
+   * well over the browser's own touch slop: at FIT scale on a 393 px screen
+   * these 24 design pixels are about 13 CSS pixels, so a thumb that wobbles
+   * while pressing still orders the cell instead of silently scrolling.
+   */
+  dragThreshold: 24,
+  /**
+   * The «К ЗАБОЮ» button in the bottom-right corner of the shaft zone (issue
+   * #10). It shows up only while the face — the deepest cell dug this shift — is
+   * off screen, so there is always a tap-sized way back to the work and the
+   * player never has to guess that the shaft can be swiped. Issue #8 asks for a
+   * hit-zone of at least 48 CSS pixels: at FIT scale on a 393 px screen these 88
+   * design pixels are about 48 of them.
+   */
+  faceButton: {
+    width: 232,
+    height: 88,
+    margin: 20,
+  },
 
   /** Rows of the dome zone, top to bottom. All values are pixels from its top. */
   hud: {

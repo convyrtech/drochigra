@@ -16,7 +16,13 @@ import { cargoCapacity, isCargoBlocked, type ShiftState } from '../sim/shift.js'
  * All texts are Russian (AGENTS.md), all numbers come from the shift state.
  */
 export interface Hud {
-  readonly update: (state: ShiftState) => void;
+  /**
+   * `faceVisible` is the view's answer to «is the deepest dug row on screen?».
+   * The panel only reads it: when the face is off screen the status line stops
+   * telling the player to tap a cell — there is none to tap — and points at the
+   * «К ЗАБОЮ» button instead.
+   */
+  readonly update: (state: ShiftState, faceVisible: boolean) => void;
 }
 
 export interface HudOptions {
@@ -93,7 +99,7 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
   }
 
   return {
-    update(state: ShiftState): void {
+    update(state: ShiftState, faceVisible: boolean): void {
       const defense = state.defense;
       setText(timer, `СМЕНА ${formatTime(state.timeLeftSec)}`);
       setText(statsLeft, `СДАНО: ${state.banked} · КРИСТАЛЛЫ: ${state.crystals}`);
@@ -131,7 +137,7 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
         ready ? 'ЗАЛП' : `ЗАЛП ${Math.ceil(defense.salvoCooldownSec)}`,
       );
 
-      setText(status, statusText(state));
+      setText(status, statusText(state, faceVisible));
       const alarm = warning || isCargoBlocked(state) || state.endReason === 'breach';
       status.setColor(cssColor(alarm ? COLORS.warning : COLORS.textDim));
     },
@@ -245,7 +251,7 @@ function formatTime(seconds: number): string {
   return `${minutes}:${rest.toString().padStart(2, '0')}`;
 }
 
-function statusText(state: ShiftState): string {
+function statusText(state: ShiftState, faceVisible: boolean): string {
   if (state.phase === 'finished') {
     return state.endReason === 'breach' ? 'КУПОЛ ПРОБИТ — АВАРИЙНЫЙ ПОДЪЁМ' : 'СМЕНА ОКОНЧЕНА';
   }
@@ -257,7 +263,9 @@ function statusText(state: ShiftState): string {
   }
   switch (state.drill.mode) {
     case 'idle':
-      return 'ТКНИ КЛЕТКУ РЯДОМ С ПРОКОПАННОЙ';
+      // Nothing to tap up here: the work is further down, and the button is the
+      // way back to it.
+      return faceVisible ? 'ТКНИ КЛЕТКУ РЯДОМ С ПРОКОПАННОЙ' : 'ЗАБОЙ НИЖЕ — ЖМИ «К ЗАБОЮ»';
     case 'moving':
       // Driving between two cells of the same dig order is part of digging:
       // saying so keeps the line from flickering every fraction of a second.

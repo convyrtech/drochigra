@@ -33,11 +33,24 @@ import {
 } from '../sim/shift.js';
 import { createBaseScreen, type BaseScreen } from '../ui/baseScreen.js';
 import { createHangarScreen } from '../ui/hangarScreen.js';
+import { createFaceButton, type FaceButton } from '../ui/faceButton.js';
 import { createHud, type Hud } from '../ui/hud.js';
 import { showLayerBanner } from '../ui/layerBanner.js';
 import { createShiftReport } from '../ui/shiftReport.js';
 import { createVictoryScreen } from '../ui/victoryScreen.js';
 import { createDomeView, type DomeView } from './domeView.js';
+import {
+  faceScroll,
+  isFaceVisible,
+  shaftScroll,
+  type ShaftBounds,
+} from './shaftCamera.js';
+import {
+  advanceGesture,
+  tapPoint,
+  type GestureKind,
+  type GestureSample,
+} from './shaftGesture.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from './layout.js';
 import { browserStore, loadProfile, saveProfile } from './saveStorage.js';
 import { SFX } from './sfx.js';
@@ -51,6 +64,7 @@ const LAYER_DEPTH = {
   target: 2,
   progress: 3,
   drill: 4,
+  faceButton: 8,
   hud: 10,
   dome: 11,
   alarm: 12,
@@ -94,6 +108,7 @@ export class MainScene extends Phaser.Scene {
   private progress!: Phaser.GameObjects.Rectangle;
   private drill!: Phaser.GameObjects.Rectangle;
   private hud!: Hud;
+  private faceButton: FaceButton | null = null;
   private domeView!: DomeView;
   private baseScreen: BaseScreen | null = null;
   private reportShown = false;
@@ -130,6 +145,33 @@ export class MainScene extends Phaser.Scene {
 
   /** Sound starts only on a user gesture: unlock on the first tap anywhere. */
   private unlocked = false;
+
+  /**
+   * Vertical shaft scrolling (issue #10). A tap picks a cell; a drag scrolls the
+   * camera up/down so the player can always reach cells deeper than the visible
+   * frame, even when everything on screen is dug. While a finger owns the camera
+   * the auto-follow stands aside so it does not overwrite the scrolled view; the
+   * rules themselves live in `shaftCamera.ts`, this scene only feeds them.
+   */
+  private dragPointerId: number | null = null;
+  private dragStartX = 0;
+  private dragStartY = 0;
+  private dragStartScrollY = 0;
+  private dragDeltaY = 0;
+  /**
+   * What the finger now on the screen is doing, latched as it travels: it may
+   * grow from a tap into a shaft drag or into an ignored swipe, never back. Only
+   * `tap` ever reaches the mine — PLAN_V1 §3: no game decision is taken by a
+   * swipe. The rule itself lives in `shaftGesture.ts`.
+   */
+  private gesture: GestureKind = 'tap';
+  /**
+   * The player dragged and let go: the view they scrolled to stays put instead
+   * of snapping back to the drill on the very next frame. It is handed back to
+   * the auto-follow as soon as the player gives an order — looked around,
+   * decided, camera drives after the drill again.
+   */
+  private manualScroll = false;
 
   /**
    * Whether the offset-tab pause handlers are attached. The scene restarts in
@@ -224,9 +266,16 @@ export class MainScene extends Phaser.Scene {
     this.detectShiftEvents(state, deltaMs);
     this.paintCells();
     this.paintDrill();
-    this.followDrill();
+    // Time is up and the drill is climbing out on its own: the manual look would
+    // leave the player staring at rock through the whole ascent.
+    if (state.phase !== 'running') {
+      this.manualScroll = false;
+    }
+    this.updateShaftCamera();
     this.announceLayer(state);
-    this.hud.update(state);
+    const faceVisible = this.faceVisible();
+    this.faceButton?.setVisible(state.phase === 'running' && !faceVisible);
+    this.hud.update(state, faceVisible);
     this.domeView.update(state);
 
     if (state.phase === 'finished' && !this.reportShown) {
@@ -431,6 +480,13 @@ export class MainScene extends Phaser.Scene {
     this.prevWarning = false;
     this.sirenTick = 0;
     this.turretTick = 0;
+    // Fresh shift, fresh fingers: no dangling drag and no manual look left over
+    // from a previous shift (`scene.restart` reuses this instance, so a field
+    // that is not reset here survives into the new shift).
+    this.dragPointerId = null;
+    this.gesture = 'tap';
+    this.dragDeltaY = 0;
+    this.manualScroll = false;
 
     this.drawShaft();
     // Effects that only the shift uses: created fresh for the shift so pools
@@ -442,7 +498,7 @@ export class MainScene extends Phaser.Scene {
       domeHeight: this.domeHeight,
       depth: LAYER_DEPTH.hud,
       onBank: () => {
-        callElevator(state);
+        this.orderElevator(state);
       },
       onSalvo: () => {
         // Salvo only fires when it is ready; the sound and jolt go with the blast.
@@ -458,8 +514,22 @@ export class MainScene extends Phaser.Scene {
       depth: LAYER_DEPTH.dome,
       frameDepth: LAYER_DEPTH.alarm,
     });
+    this.faceButton = createFaceButton(this, {
+      width,
+      viewHeight: height,
+      depth: LAYER_DEPTH.faceButton,
+    });
 
-    this.input.on(Phaser.Input.Events.POINTER_DOWN, this.onTap, this);
+    // Tap vs vertical shaft-scroll (issue #10). A pointer that stays still is a
+    // tap (pick a cell / order the turret); one that moves far enough drags the
+    // shaft camera instead. The tap fires on pointerup so a scroll never also
+    // fires a stray cell pick.
+    this.input.on(Phaser.Input.Events.POINTER_DOWN, this.onPointerDown, this);
+    this.input.on(Phaser.Input.Events.POINTER_MOVE, this.onPointerMove, this);
+    this.input.on(Phaser.Input.Events.POINTER_UP, this.onPointerUp, this);
+    // A finger that leaves the canvas never sends POINTER_UP. Without this the
+    // gesture would stay open forever and the camera would never follow again.
+    this.input.on(Phaser.Input.Events.POINTER_UP_OUTSIDE, this.onPointerUp, this);
     // Web Audio needs a user gesture: the first tap anywhere unlocks it.
     this.input.on(Phaser.Input.Events.POINTER_DOWN, () => {
       if (!this.unlocked) {
@@ -467,8 +537,10 @@ export class MainScene extends Phaser.Scene {
         SFX.unlock();
       }
     });
-    this.followDrill();
-    this.hud.update(state);
+    this.updateShaftCamera();
+    const faceVisible = this.faceVisible();
+    this.faceButton.setVisible(state.phase === 'running' && !faceVisible);
+    this.hud.update(state, faceVisible);
     this.domeView.update(state);
   }
 
@@ -693,42 +765,185 @@ export class MainScene extends Phaser.Scene {
     this.prevCrystals = state.crystals;
   }
 
-  /** Camera keeps the drill in the middle of the shaft zone, below the dome. */
-  private followDrill(): void {
+  /**
+   * Put the shaft camera where `shaftCamera.ts` says it belongs: on the drill
+   * when nobody is holding the view, on the finger during a drag, and nowhere at
+   * all while the player is looking around. Called every frame and on every
+   * pointer move, so all three cases go through the same rules.
+   */
+  private updateShaftCamera(): void {
     const state = this.state;
     if (!state) {
       return;
     }
-    const { height } = this.scale.gameSize;
-    const shaftHeight = height - this.domeHeight;
-    const drillY = (state.drill.row + 0.5) * this.cellSize;
-    const worldHeight = state.rowCount * this.cellSize;
-    const wanted = drillY - (this.domeHeight + shaftHeight / 2);
-    const maxScroll = Math.max(-this.domeHeight, worldHeight - height);
-    this.cameras.main.setScroll(0, Phaser.Math.Clamp(wanted, -this.domeHeight, maxScroll));
+    const wanted = shaftScroll({
+      ...this.shaftBounds(state),
+      drillRow: state.drill.row,
+      dragging: this.dragPointerId !== null && this.gesture === 'shaftDrag',
+      pointerDown: this.dragPointerId !== null,
+      manualScroll: this.manualScroll,
+      dragStartScrollY: this.dragStartScrollY,
+      dragDeltaY: this.dragDeltaY,
+      currentScrollY: this.cameras.main.scrollY,
+    });
+    if (wanted !== null) {
+      this.cameras.main.setScroll(0, wanted);
+    }
   }
 
-  private onTap(pointer: Phaser.Input.Pointer): void {
+  /** The shaft measured against the screen, as `shaftCamera.ts` wants it. */
+  private shaftBounds(state: ShiftState): ShaftBounds {
+    return {
+      cellSize: this.cellSize,
+      domeHeight: this.domeHeight,
+      viewHeight: this.scale.gameSize.height,
+      rowCount: state.rowCount,
+    };
+  }
+
+  /**
+   * Is the face — the deepest row dug this shift — on screen? It drives both the
+   * «К ЗАБОЮ» button and the hint in the status line, so both appear and leave
+   * together.
+   */
+  private faceVisible(): boolean {
+    const state = this.state;
+    if (!state) {
+      return true;
+    }
+    return isFaceVisible(this.shaftBounds(state), state.deepestRow, this.cameras.main.scrollY);
+  }
+
+  /**
+   * «К ЗАБОЮ»: put the camera on the face and keep it there. The manual look has
+   * to go on, or the auto-follow would pull the view back to the drill on the
+   * next frame and the button would do nothing at all.
+   */
+  private jumpToFace(state: ShiftState): void {
+    this.cameras.main.setScroll(0, faceScroll(this.shaftBounds(state), state.deepestRow));
+    this.manualScroll = true;
+  }
+
+  /**
+   * A pointer went down. Remember where the gesture began so the move can tell a
+   * tap from a drag (issue #10). No cell is picked yet — that happens on pointer
+   * up unless the finger actually dragged the shaft.
+   */
+  private onPointerDown(pointer: Phaser.Input.Pointer): void {
     const state = this.state;
     if (!state || state.phase === 'finished') {
       return;
     }
+    this.dragPointerId = pointer.id;
+    this.dragStartX = pointer.x;
+    this.dragStartY = pointer.y;
+    this.dragStartScrollY = this.cameras.main.scrollY;
+    this.dragDeltaY = 0;
+    this.gesture = 'tap';
+  }
+
+  /** The gesture so far, as `shaftGesture.ts` wants to see it. */
+  private gestureSample(pointer: Phaser.Input.Pointer): GestureSample {
+    return {
+      startX: this.dragStartX,
+      startY: this.dragStartY,
+      x: pointer.x,
+      y: pointer.y,
+      domeHeight: this.domeHeight,
+      threshold: VIEW.dragThreshold,
+    };
+  }
+
+  /**
+   * The finger moved: re-read what the gesture has become. A vertical travel
+   * over the shaft scrolls the camera; a wobble under the threshold is still a
+   * tap; anything else — a sideways swipe, a swipe that began up in the dome
+   * zone — is ignored from here on and will not reach the mine.
+   */
+  private onPointerMove(pointer: Phaser.Input.Pointer): void {
+    if (pointer.id !== this.dragPointerId) {
+      return;
+    }
+    this.gesture = advanceGesture(this.gesture, this.gestureSample(pointer));
+    if (this.gesture !== 'shaftDrag') {
+      return;
+    }
+    this.dragDeltaY = pointer.y - this.dragStartY;
+    this.updateShaftCamera();
+  }
+
+  /**
+   * The gesture ended (here or outside the canvas). A shaft drag has already
+   * scrolled the camera and is not a tap: the view it stopped at is kept as a
+   * manual look until the player orders the drill somewhere, otherwise the
+   * auto-follow would snap back to the drill on the very next frame and the deep
+   * cells would stay out of reach. A finger that never travelled far enough is a
+   * tap, so pick the cell (or order the turret) now — at the point it went
+   * **down**, not where it came up. Every other gesture ends in nothing.
+   */
+  private onPointerUp(pointer: Phaser.Input.Pointer): void {
+    if (pointer.id !== this.dragPointerId) {
+      return;
+    }
+    const sample = this.gestureSample(pointer);
+    const kind = advanceGesture(this.gesture, sample);
+    const tap = tapPoint(kind, sample);
+    this.dragPointerId = null;
+    this.gesture = 'tap';
+    this.dragDeltaY = 0;
+    if (kind === 'shaftDrag') {
+      this.manualScroll = true;
+      return;
+    }
+    if (tap) {
+      this.onTap(tap.x, tap.y);
+    }
+  }
+
+  /** A tap landed at this point of the screen, in design pixels. */
+  private onTap(x: number, y: number): void {
+    const state = this.state;
+    if (!state || state.phase === 'finished') {
+      return;
+    }
+    // The «К ЗАБОЮ» button floats over the shaft: it is a view control, not a
+    // cell, so it answers first. It is only ever hit while it is visible.
+    if (this.faceButton?.contains(x, y)) {
+      this.jumpToFace(state);
+      return;
+    }
     // Up in the dome zone a tap is an order for the turret, not for the drill.
-    if (pointer.y < this.domeHeight) {
-      const enemyId = this.domeView.pickEnemy(pointer.x, pointer.y);
+    if (y < this.domeHeight) {
+      const enemyId = this.domeView.pickEnemy(x, y);
       if (enemyId !== null) {
         aimTurret(state, enemyId);
       }
       return;
     }
-    const worldY = pointer.y + this.cameras.main.scrollY;
-    const col = Math.floor((pointer.x + this.cameras.main.scrollX) / this.cellSize);
+    const worldY = y + this.cameras.main.scrollY;
+    const col = Math.floor((x + this.cameras.main.scrollX) / this.cellSize);
     const row = Math.floor(worldY / this.cellSize);
+    // An order means the player is done looking around: the camera goes back to
+    // driving after the drill. An order the shift refused changes nothing.
     if (row === ENTRANCE_ROW) {
-      callElevator(state);
+      this.orderElevator(state);
       return;
     }
-    aimDrill(state, col, row);
+    if (aimDrill(state, col, row)) {
+      this.manualScroll = false;
+    }
+  }
+
+  /**
+   * Call the elevator, whichever way the player asked for it: the «СДАТЬ» button
+   * of the HUD or a tap on the entrance row. Both are the same order to the same
+   * drill, so both end the manual look and hand the camera back to the
+   * auto-follow — but only when the shift actually took the order.
+   */
+  private orderElevator(state: ShiftState): void {
+    if (callElevator(state)) {
+      this.manualScroll = false;
+    }
   }
 
   /**
