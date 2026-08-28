@@ -10,6 +10,7 @@ import {
   walletAmount,
   type Profile,
 } from '../sim/progress.js';
+import { makeTapTarget } from './tapTarget.js';
 
 /**
  * The bottom of the Abyss is dug: row `shift.grid_depth` is reached, the city is
@@ -131,8 +132,7 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
   const button = scene.add
     .rectangle(buttonX, buttonY, box.buttonWidth, box.buttonHeight, COLORS.button)
     .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.buttonEdge)
-    .setInteractive({ useHandCursor: true });
+    .setStrokeStyle(3, COLORS.buttonEdge);
   const buttonText = centered(
     scene,
     buttonX + box.buttonWidth / 2,
@@ -190,7 +190,7 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
   });
 
   let started = false;
-  button.on(Phaser.Input.Events.POINTER_DOWN, () => {
+  makeTapTarget(button, () => {
     if (started) {
       return;
     }

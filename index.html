@@ -33,7 +33,6 @@
 
       #game {
         position: fixed;
-        inset: 0;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -43,11 +42,16 @@
          * game runs as a Telegram Mini App, under Telegram's own chrome (the
          * expanded header and the bottom action bar) via
          * --tg-content-safe-area-inset-*. Outside Telegram the --tg-* variables
-         * are undefined, fall back to 0px, and the padding reduces to the plain
+         * are undefined, fall back to 0px, and the insets reduce to the plain
          * env() the game always had — so the web build looks exactly as before.
-         * The canvas is FIT-scaled and centred inside this padded box
-         * (CENTER_BOTH), so its bottom edge — where НАЧАТЬ СМЕНУ and the hangar
-         * bar sit — never reaches the system bars or Telegram's overlay panels.
+         * The insets are taken off the **box itself**, not added as padding
+         * inside it. Phaser's Scale.FIT measures the parent's border box, so
+         * padding is invisible to it: measured with an emulated 47 px notch and
+         * a 34 px bottom bar, a padded #game still produced a 698 px canvas that
+         * ran from y = 6.5 to y = 704.5 — under the notch, under the system bar
+         * and 6.5 px off the bottom of the screen, with НАЧАТЬ СМЕНУ and the
+         * hangar bar inside the unsafe strip. A shrunken box gives Phaser the
+         * safe rectangle to fit into, which is the whole point.
          * max() needs like units; env() and the var() fallback both resolve to
          * px. The viewport meta has viewport-fit=cover, which is what makes
          * env()'s safe-area-inset-* report non-zero on devices with a notch.
@@ -65,7 +69,10 @@
           env(safe-area-inset-left),
           var(--tg-content-safe-area-inset-left, 0px)
         );
-        padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
+        top: var(--safe-top);
+        right: var(--safe-right);
+        bottom: var(--safe-bottom);
+        left: var(--safe-left);
         box-sizing: border-box;
       }
 

@@ -2,11 +2,15 @@
  * Telegram Mini App integration, client-side only (no bot, no server).
  *
  * Everything Telegram-specific lives in this one module; the rest of the game
- * never touches window.Telegram. Outside Telegram the module is inert: tg()
- * returns null and every call degrades to a harmless no-op, so the game runs
- * exactly as before in a plain browser, a local dev server or on GitHub Pages.
- * No secrets, no requests to a bot — the ready()/theme/fullscreen calls are all
- * part of the WebView page API.
+ * never touches window.Telegram. Outside Telegram every call degrades to a
+ * harmless no-op, so the game runs exactly as before in a plain browser, a local
+ * dev server or on GitHub Pages. No secrets, no requests to a bot — the
+ * ready()/theme/fullscreen calls are all part of the WebView page API.
+ *
+ * One trap is worth stating once (issue #12): the official script is loaded by
+ * index.html in every browser and defines window.Telegram.WebApp everywhere, so
+ * the object's existence proves nothing. `isTelegram()` below asks for a Mini
+ * App session instead, and that is the question the rest of the game asks.
  */
 
 /**
@@ -16,6 +20,18 @@
  */
 interface TelegramWebAppLike {
   ready(): void;
+  /**
+   * The signed session of a real Mini App launch. Empty outside Telegram — the
+   * official script defines the whole WebApp object in any browser, so this is
+   * what tells a launch from a stub (issue #12).
+   */
+  initData?: string;
+  initDataUnsafe?: {
+    auth_date?: number | string;
+    hash?: string;
+    query_id?: string;
+    user?: unknown;
+  };
   /** Push the window out of a collapsed Mini App to full-height, if supported. */
   expand?(): void;
   colorScheme?: 'light' | 'dark';
@@ -38,15 +54,55 @@ declare global {
   }
 }
 
-/** The Telegram WebView API, or null when not running inside Telegram. */
+/**
+ * The Telegram WebView API object, or null when the script did not define one.
+ *
+ * Careful: this says the **script** is there, not that Telegram is. `index.html`
+ * loads the official telegram-web-app.js unconditionally, and it defines
+ * window.Telegram.WebApp in any browser — version «6.0», a working ready() and
+ * an empty session. Use it only for calls that are harmless outside Telegram
+ * (ready/expand, which post a message nobody is listening to); for decisions,
+ * ask `isTelegram()`.
+ */
 function tg(): TelegramWebAppLike | null {
   const app = window.Telegram?.WebApp;
   return app && typeof app.ready === 'function' ? app : null;
 }
 
-/** True when running inside Telegram and its WebView API is available. */
+/**
+ * Was this WebApp object handed a real Mini App session (issue #12)? A launch
+ * from Telegram always carries `initData` — the signed launch parameters — while
+ * the script's own stub in a plain browser leaves it an empty string. Older
+ * clients that filled only the parsed copy are covered by the second half: any
+ * of the launch fields being present is a session too. Nothing here is trusted
+ * as a credential; it only answers «are we inside the app or not».
+ */
+function hasTelegramSession(app: TelegramWebAppLike): boolean {
+  if (typeof app.initData === 'string' && app.initData.length > 0) {
+    return true;
+  }
+  const parsed = app.initDataUnsafe;
+  if (!parsed) {
+    return false;
+  }
+  return (
+    parsed.auth_date !== undefined ||
+    parsed.hash !== undefined ||
+    parsed.query_id !== undefined ||
+    parsed.user !== undefined
+  );
+}
+
+/**
+ * True only inside a real Telegram Mini App. Everything that changes behaviour
+ * asks this, never the mere existence of the object: `src/main.ts` skips its own
+ * screen.orientation.lock inside Telegram (the WebView owns the orientation
+ * there), and skipping it everywhere left the portrait lock dead in every
+ * browser — the whole of issue #12.
+ */
 function isTelegram(): boolean {
-  return tg() !== null;
+  const app = tg();
+  return app !== null && hasTelegramSession(app);
 }
 
 /**
@@ -79,7 +135,10 @@ function initTg(): void {
  */
 function applyTgTheme(): void {
   const app = tg();
-  if (!app) {
+  // The stub outside Telegram reports a colour scheme of its own; the plain web
+  // build keeps its fixed dark page, so the theme is applied only for a real
+  // Mini App session.
+  if (!app || !isTelegram()) {
     return;
   }
   try {
@@ -143,4 +202,4 @@ function setupFullscreenOnGesture(app: TelegramWebAppLike): void {
   window.addEventListener('touchend', onGesture);
 }
 
-export { tg, isTelegram, initTg, applyTgTheme };
+export { tg, hasTelegramSession, isTelegram, initTg, applyTgTheme };

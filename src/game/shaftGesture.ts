@@ -17,26 +17,41 @@
 
 export type GestureKind = 'tap' | 'shaftDrag' | 'ignored';
 
-export interface GestureSample {
+/** How far the finger has travelled, and how far it is allowed to. */
+export interface TapTravel {
   /** Where the finger went down. */
   readonly startX: number;
   readonly startY: number;
   /** Where the finger is now. */
   readonly x: number;
   readonly y: number;
-  /** Height of the dome zone: the shaft begins under it. */
-  readonly domeHeight: number;
   /** Travel that turns a tap into a swipe, in design pixels. */
   readonly threshold: number;
 }
 
+export interface GestureSample extends TapTravel {
+  /** Height of the dome zone: the shaft begins under it. */
+  readonly domeHeight: number;
+}
+
+/**
+ * Is the finger still standing still enough to be a tap? The one place the
+ * question is answered, so a button (`src/ui/tapTarget.ts`) and the shaft read
+ * a swipe exactly the same way (issue #11).
+ */
+export function isTapTravel(travel: TapTravel): boolean {
+  return (
+    Math.abs(travel.x - travel.startX) < travel.threshold &&
+    Math.abs(travel.y - travel.startY) < travel.threshold
+  );
+}
+
 /** What this one sample looks like, with no memory of the gesture so far. */
 export function classifyGesture(sample: GestureSample): GestureKind {
-  const movedX = Math.abs(sample.x - sample.startX) >= sample.threshold;
-  const movedY = Math.abs(sample.y - sample.startY) >= sample.threshold;
-  if (!movedX && !movedY) {
+  if (isTapTravel(sample)) {
     return 'tap';
   }
+  const movedY = Math.abs(sample.y - sample.startY) >= sample.threshold;
   // The mine scrolls, the dome zone does not: a swipe that began up there is
   // not a shaft drag, whichever way it went.
   if (movedY && sample.startY >= sample.domeHeight) {

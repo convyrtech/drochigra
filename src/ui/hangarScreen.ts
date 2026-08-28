@@ -3,6 +3,7 @@ import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
 import { SFX } from '../game/sfx.js';
 import type { Balance } from '../sim/balance.js';
 import { resourceName, scrapId, type HangarHarvest } from '../sim/progress.js';
+import { makeTapTarget } from './tapTarget.js';
 
 /**
  * The screen that greets a returning player: what the hangar made while the game
@@ -80,8 +81,7 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
   const button = scene.add
     .rectangle(buttonX, buttonY, box.buttonWidth, box.buttonHeight, COLORS.button)
     .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.buttonEdge)
-    .setInteractive({ useHandCursor: true });
+    .setStrokeStyle(3, COLORS.buttonEdge);
   const buttonText = centered(
     scene,
     buttonX + box.buttonWidth / 2,
@@ -117,7 +117,7 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
   });
 
   let taken = false;
-  button.on(Phaser.Input.Events.POINTER_DOWN, () => {
+  makeTapTarget(button, () => {
     if (taken) {
       return;
     }

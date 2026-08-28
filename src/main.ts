@@ -1,6 +1,7 @@
 import { createGame } from './game/createGame.js';
 import { loadBalance } from './game/loadBalance.js';
 import { initTg, applyTgTheme, isTelegram } from './game/tg.js';
+import { fpsRequested, showFpsOverlay } from './ui/fpsOverlay.js';
 
 const PARENT_ID = 'game';
 /** Phone-ish: the smaller screen edge under this is a handheld device. */
@@ -14,6 +15,11 @@ async function start(): Promise<void> {
   applyTgTheme();
   const balance = await loadBalance();
   createGame(PARENT_ID, balance);
+  // `?fps=1` puts the frame counter on the screen (issue #8). Off by default:
+  // the players must never see it, the checks always can.
+  if (fpsRequested(window.location.search)) {
+    showFpsOverlay();
+  }
 }
 
 /**

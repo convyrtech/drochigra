@@ -3,6 +3,7 @@ import { VIEW } from '../src/game/layout.js';
 import {
   advanceGesture,
   classifyGesture,
+  isTapTravel,
   tapPoint,
   type GestureKind,
   type GestureSample,
@@ -137,5 +138,56 @@ describe('a whole gesture', () => {
       kind: 'tap',
       tap: { x: 200, y: 150 },
     });
+  });
+});
+
+/**
+ * The same question a button asks (issue #11): the HUD, the base, the report and
+ * the victory screen all fire on release and only for a finger that stayed put,
+ * and they read that off this one rule — so a swipe that starts on «ЗАЛП»
+ * behaves exactly like a swipe that starts on the rock.
+ */
+describe('is the finger still standing still (what a button asks)', () => {
+  const threshold = VIEW.dragThreshold;
+  /** Where «ЗАЛП» is drawn: the right half of the button row of the HUD. */
+  const SALVO = { x: 540, y: 374 };
+
+  it('is a tap while the travel is under the threshold on both axes', () => {
+    expect(
+      isTapTravel({
+        startX: SALVO.x,
+        startY: SALVO.y,
+        x: SALVO.x + threshold - 1,
+        y: SALVO.y + threshold - 1,
+        threshold,
+      }),
+    ).toBe(true);
+  });
+
+  it('is not a tap once the finger has travelled down the screen', () => {
+    // The measured case of issue #11: a swipe begun on «ЗАЛП» spent the salvo.
+    expect(
+      isTapTravel({ startX: SALVO.x, startY: SALVO.y, x: SALVO.x, y: SALVO.y + 300, threshold }),
+    ).toBe(false);
+  });
+
+  it('is not a tap on a sideways travel either', () => {
+    expect(
+      isTapTravel({ startX: SALVO.x, startY: SALVO.y, x: SALVO.x - 200, y: SALVO.y, threshold }),
+    ).toBe(false);
+  });
+
+  it('agrees with the shaft: the same travel is a tap for both', () => {
+    for (const travel of [0, 5, threshold - 1, threshold, threshold + 40]) {
+      const asButton = isTapTravel({
+        startX: 360,
+        startY: SHAFT_Y,
+        x: 360,
+        y: SHAFT_Y + travel,
+        threshold,
+      });
+      const asShaft = classifyGesture(sample({ y: SHAFT_Y + travel })) === 'tap';
+      expect(asButton, `travel ${travel}`).toBe(asShaft);
+    }
   });
 });

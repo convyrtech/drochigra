@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
+import { COLORS, cssColor, FONT_FAMILY, hudButtonHitZone, VIEW } from '../game/layout.js';
 import {
   domeHpShare,
   isDomeWarning,
@@ -23,6 +23,17 @@ export interface Hud {
    * «К ЗАБОЮ» button instead.
    */
   readonly update: (state: ShiftState, faceVisible: boolean) => void;
+  /**
+   * A tap landed at this point of the screen (design pixels): press the button
+   * under it, if any, and say whether the panel took the tap.
+   *
+   * Issue #11: the two buttons have no Phaser input of their own, exactly like
+   * «К ЗАБОЮ» (`src/ui/faceButton.ts`). MainScene asks them from `onTap`, which
+   * only ever runs for a finger that stayed still and is handed the point the
+   * finger went **down** at, so a swipe that begins on «ЗАЛП» scrolls the shaft
+   * instead of spending the salvo (PLAN_V1 §3).
+   */
+  readonly tap: (x: number, y: number) => boolean;
 }
 
 export interface HudOptions {
@@ -77,8 +88,29 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
     })
     .setOrigin(0.5, 0);
 
-  const bank = createButton(scene, hud.margin, buttonWidth, 'СДАТЬ', onBank);
-  const salvo = createButton(scene, hud.margin + buttonWidth + hud.buttonGap, buttonWidth, 'ЗАЛП', onSalvo);
+  // Issue #8: the drawn buttons are `hud.buttonHeight` tall because the dome
+  // zone has nothing left to give — the timer, the corridor, the shell, the two
+  // bars and the status line are all above them. The zone a finger is tested
+  // against is MIN_TOUCH tall instead, pushed up so its bottom is the bottom of
+  // the panel: a tap under the dome edge belongs to the shaft, not to «ЗАЛП».
+  const { top: hitTop, height: hitHeight } = hudButtonHitZone(domeHeight);
+
+  const bank = createButton(scene, {
+    x: hud.margin,
+    buttonWidth,
+    hitTop,
+    hitHeight,
+    text: 'СДАТЬ',
+    onTap: onBank,
+  });
+  const salvo = createButton(scene, {
+    x: hud.margin + buttonWidth + hud.buttonGap,
+    buttonWidth,
+    hitTop,
+    hitHeight,
+    text: 'ЗАЛП',
+    onTap: onSalvo,
+  });
 
   const parts = [
     panel,
@@ -141,6 +173,16 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
       const alarm = warning || isCargoBlocked(state) || state.endReason === 'breach';
       status.setColor(cssColor(alarm ? COLORS.warning : COLORS.textDim));
     },
+
+    tap(x: number, y: number): boolean {
+      for (const button of [bank, salvo]) {
+        if (button.contains(x, y)) {
+          button.press();
+          return true;
+        }
+      }
+      return false;
+    },
   };
 }
 
@@ -182,22 +224,28 @@ interface Button {
   readonly parts: PinnedPart[];
   readonly label: Phaser.GameObjects.Text;
   readonly setFill: (share: number, ready: boolean) => void;
+  /** Is this point of the screen inside the button's touch zone? */
+  readonly contains: (x: number, y: number) => boolean;
+  readonly press: () => void;
 }
 
-function createButton(
-  scene: Phaser.Scene,
-  x: number,
-  buttonWidth: number,
-  text: string,
-  onTap: () => void,
-): Button {
+interface ButtonOptions {
+  readonly x: number;
+  readonly buttonWidth: number;
+  /** The touch zone, which is taller than the drawn plate (issue #8). */
+  readonly hitTop: number;
+  readonly hitHeight: number;
+  readonly text: string;
+  readonly onTap: () => void;
+}
+
+function createButton(scene: Phaser.Scene, options: ButtonOptions): Button {
+  const { x, buttonWidth, hitTop, hitHeight, text, onTap } = options;
   const { hud, font } = VIEW;
   const back = scene.add
     .rectangle(x, hud.buttonTop, buttonWidth, hud.buttonHeight, COLORS.buttonOff)
     .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.buttonEdge)
-    .setInteractive({ useHandCursor: true });
-  back.on(Phaser.Input.Events.POINTER_DOWN, onTap);
+    .setStrokeStyle(3, COLORS.buttonEdge);
 
   const fill = scene.add
     .rectangle(x, hud.buttonTop, buttonWidth, hud.buttonHeight, COLORS.button)
@@ -218,6 +266,10 @@ function createButton(
       fill.width = buttonWidth * Math.min(1, Math.max(0, share));
       label.setColor(cssColor(ready ? COLORS.text : COLORS.textDim));
     },
+    contains(px: number, py: number): boolean {
+      return px >= x && px <= x + buttonWidth && py >= hitTop && py <= hitTop + hitHeight;
+    },
+    press: onTap,
   };
 }
 

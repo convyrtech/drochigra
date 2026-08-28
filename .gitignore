@@ -19,3 +19,4 @@ ios/
 .env
 .env.*
 !.env.example
+Karing/

@@ -51,7 +51,7 @@ import {
   type GestureKind,
   type GestureSample,
 } from './shaftGesture.js';
-import { COLORS, cssColor, FONT_FAMILY, VIEW } from './layout.js';
+import { COLORS, cssColor, elevatorBandHeight, FONT_FAMILY, VIEW } from './layout.js';
 import { browserStore, loadProfile, saveProfile } from './saveStorage.js';
 import { SFX } from './sfx.js';
 import { createChipPool, type ChipPool } from '../ui/particles.js';
@@ -193,6 +193,10 @@ export class MainScene extends Phaser.Scene {
     this.cellPainted = [];
     this.reportShown = false;
     this.announcedLayers = new Set<number>();
+    // `scene.restart` reuses this instance, and the shift's own objects are gone
+    // by now: the button of the previous shift must not be asked about taps on
+    // the base screen. It is built again in startShift.
+    this.faceButton = null;
     this.wirePauseHandling();
 
     // localStorage and the clock are the view's business, never the simulation's.
@@ -484,6 +488,9 @@ export class MainScene extends Phaser.Scene {
     // from a previous shift (`scene.restart` reuses this instance, so a field
     // that is not reset here survives into the new shift).
     this.dragPointerId = null;
+    this.dragStartX = 0;
+    this.dragStartY = 0;
+    this.dragStartScrollY = 0;
     this.gesture = 'tap';
     this.dragDeltaY = 0;
     this.manualScroll = false;
@@ -912,6 +919,12 @@ export class MainScene extends Phaser.Scene {
       this.jumpToFace(state);
       return;
     }
+    // «СДАТЬ» and «ЗАЛП» come next, for the same reason and by the same rules
+    // (issue #11): they own their part of the dome zone, so nothing under them
+    // is asked about the tap.
+    if (this.hud.tap(x, y)) {
+      return;
+    }
     // Up in the dome zone a tap is an order for the turret, not for the drill.
     if (y < this.domeHeight) {
       const enemyId = this.domeView.pickEnemy(x, y);
@@ -925,7 +938,14 @@ export class MainScene extends Phaser.Scene {
     const row = Math.floor(worldY / this.cellSize);
     // An order means the player is done looking around: the camera goes back to
     // driving after the drill. An order the shift refused changes nothing.
-    if (row === ENTRANCE_ROW) {
+    //
+    // The lift row is one cell tall, and a cell is 80 design pixels — just under
+    // the minimum touch target (issue #8). So the band that hands the cargo over
+    // is the entrance row grown to MIN_TOUCH; the few pixels it borrows are the
+    // very top of the first row of rock, which stays tappable everywhere else.
+    const entranceTop = ENTRANCE_ROW * this.cellSize;
+    const entranceBand = elevatorBandHeight(this.cellSize);
+    if (worldY >= entranceTop && worldY < entranceTop + entranceBand) {
       this.orderElevator(state);
       return;
     }

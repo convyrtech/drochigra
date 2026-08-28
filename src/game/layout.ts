@@ -2,17 +2,53 @@
  * Screen layout only: proportions, fonts and colours from PLAN_V1 §3.
  * These are view numbers, not game numbers — every gameplay value stays in
  * content/balance.json.
- *
- * Issue #8 (mobile interface): every interactive hit-zone must be at least 48
- * design pixels wide AND tall (Apple's recommended minimum touch-target size),
- * so a finger lands on it easily at any FIT scale. The enemies picked by the
- * turret use `dome.pickRadius`; the on-screen buttons keep their own sizes. If
- * you add a new tappable thing, keep it ≥ 48 in both dimensions.
  */
+
+/** Design resolution, portrait. Phaser scales it to any screen (Scale.FIT). */
+const DESIGN_WIDTH = 720;
+const DESIGN_HEIGHT = 1280;
+
+/**
+ * Issue #8, the minimum touch target — the one number every tappable thing is
+ * measured against.
+ *
+ * Apple (44) and Google (48) both give it in **screen** pixels, and the game is
+ * not drawn in those: `createGame.ts` runs Scale.FIT over a 720×1280 design
+ * canvas, so on a phone 393 CSS pixels wide every design pixel is only about
+ * 393/720 ≈ 0.55 of a CSS one. A zone «48 pixels» wide in design space would
+ * land on the glass at ~26 — half the norm. So the minimum is written down in
+ * CSS pixels and converted here, once.
+ */
+export const MIN_TOUCH_CSS = 48;
+
+/**
+ * The screen the conversion is done for, in CSS pixels of width. FIT scale is
+ * min(cssWidth/720, cssHeight/1280) and phones are narrower than 9:16, so width
+ * is what decides it; the narrower the screen, the more design pixels one CSS
+ * pixel costs. 393 is the width of the phone the game is laid out and
+ * screenshotted on (Motorola Edge 60s class).
+ *
+ * Honest caveat, so nobody reads more into the number than it holds: on a
+ * 360-CSS-pixel phone (Infinix X6833B class) the scale is 0.5 and the same zone
+ * measures 44 CSS pixels, not 48. Lifting it there means 96 design pixels, and
+ * eight upgrade rows plus seven checkpoint chips no longer fit one portrait
+ * screen — that is a base-screen redesign, not a constant.
+ */
+export const TOUCH_REFERENCE_SCREEN_CSS = 393;
+
+/**
+ * The minimum touch target in design pixels: 88. Everything tappable is at
+ * least this wide and this tall — the buttons themselves where the screen has
+ * room for it, and the zone the finger is tested against where it does not
+ * (`src/ui/tapTarget.ts` grows the hit area around a smaller drawn button).
+ * If you add a new tappable thing, run it past this number.
+ */
+export const MIN_TOUCH = Math.ceil((MIN_TOUCH_CSS * DESIGN_WIDTH) / TOUCH_REFERENCE_SCREEN_CSS);
+
 export const VIEW = {
   /** Design resolution, portrait. Phaser scales it to any screen. */
-  width: 720,
-  height: 1280,
+  width: DESIGN_WIDTH,
+  height: DESIGN_HEIGHT,
   /**
    * Top share of the screen taken by the dome zone; the rest is the shaft.
    * PLAN_V1 §3 asks for about a third: the zone has to hold the timer, the
@@ -41,13 +77,13 @@ export const VIEW = {
    * The «К ЗАБОЮ» button in the bottom-right corner of the shaft zone (issue
    * #10). It shows up only while the face — the deepest cell dug this shift — is
    * off screen, so there is always a tap-sized way back to the work and the
-   * player never has to guess that the shaft can be swiped. Issue #8 asks for a
-   * hit-zone of at least 48 CSS pixels: at FIT scale on a 393 px screen these 88
-   * design pixels are about 48 of them.
+   * player never has to guess that the shaft can be swiped. Its height is the
+   * minimum touch target itself: it was the first zone measured in CSS pixels
+   * (issue #8) and now it takes the number from the same place as everyone else.
    */
   faceButton: {
     width: 232,
-    height: 88,
+    height: MIN_TOUCH,
     margin: 20,
   },
 
@@ -66,6 +102,14 @@ export const VIEW = {
     barGap: 24,
     statusY: 306,
     buttonTop: 346,
+    /**
+     * «СДАТЬ» and «ЗАЛП» as they are drawn. The dome zone is full — timer,
+     * corridor, shell, two bars and the status line all sit above them — so the
+     * drawn button cannot grow to MIN_TOUCH without pushing the shell out of the
+     * zone. The zone the finger is tested against does grow (see `hud.ts`): it
+     * is MIN_TOUCH tall, pushed up so it stays inside the dome panel and never
+     * steals taps from the shaft below it.
+     */
     buttonHeight: 56,
     buttonGap: 24,
   },
@@ -95,10 +139,11 @@ export const VIEW = {
     enemyBarOffset: 16,
     targetRingRadius: 20,
     /**
-     * Taps this close to an enemy count as an order for the turret. Issue #8:
-     * every interactive hit-zone must be at least 48 design pixels wide/tall so
-     * a finger lands easily; the enemy pick is the tap target of the fight, so
-     * it follows the same rule (it used to be 40).
+     * Taps this close to an enemy count as an order for the turret — a radius,
+     * so the zone measures 2 × 48 = 96 design pixels across, comfortably over
+     * the MIN_TOUCH of 88 (≈ 52 CSS pixels on the reference screen). It is left
+     * where it is: growing it further would start stealing taps between the
+     * three lanes of the corridor, which are only ~35 design pixels apart.
      */
     pickRadius: 48,
     beamWidth: 3,
@@ -150,22 +195,29 @@ export const VIEW = {
     /**
      * The sound toggle, tucked into the top-right corner of the header where no
      * text reaches: the title is centred, the plan row is lower down.
+     *
+     * It stays 54 tall on purpose: a MIN_TOUCH-tall plate would run into the
+     * wallet line under it. Its hit zone is grown instead (`tapTarget.ts`), and
+     * it may spread over the wallet text freely — text is not tappable.
      */
     muteWidth: 160,
     muteHeight: 54,
     muteY: 14,
-    rowHeight: 86,
+    /** One upgrade row: as tall as the price button inside it (issue #8). */
+    rowHeight: MIN_TOUCH,
     rowGap: 6,
     rowPad: 18,
     /** Text baselines inside a row, from its top. */
     rowNameY: 12,
     rowEffectY: 48,
     buyWidth: 210,
-    buyHeight: 62,
+    /** The price button fills the row: it is the tap target of the base. */
+    buyHeight: MIN_TOUCH,
     /** Gap between the upgrade list and the depth picker. */
     sectionGap: 12,
     sectionTitleHeight: 38,
-    chipHeight: 74,
+    /** One checkpoint chip. Seven of them fit the width at ~91 each. */
+    chipHeight: MIN_TOUCH,
     chipGap: 6,
     /** The start button is pinned to the bottom of the screen. */
     startHeight: 116,
@@ -289,6 +341,56 @@ export const VIEW = {
     poolSize: 6,
   },
 } as const;
+
+/** A hit zone in the local coordinates of the thing it belongs to. */
+export interface HitArea {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * A drawn rectangle grown to the minimum touch target, centred on it. Something
+ * already big enough keeps exactly its own size, so nothing that meets the
+ * guideline starts stealing taps from its neighbours. Used by
+ * `src/ui/tapTarget.ts` for every button that carries its own Phaser input.
+ */
+export function touchHitArea(width: number, height: number, minTouch = MIN_TOUCH): HitArea {
+  const grownWidth = Math.max(width, minTouch);
+  const grownHeight = Math.max(height, minTouch);
+  return {
+    x: (width - grownWidth) / 2,
+    y: (height - grownHeight) / 2,
+    width: grownWidth,
+    height: grownHeight,
+  };
+}
+
+/**
+ * The vertical zone «СДАТЬ» and «ЗАЛП» answer in. The drawn plate is only
+ * `hud.buttonHeight` tall — the dome zone is full — so the zone is MIN_TOUCH
+ * tall and pushed up until it fits inside the panel: a tap below the dome edge
+ * belongs to the shaft, and must never spend the salvo.
+ */
+export function hudButtonHitZone(domeHeight: number): { top: number; height: number } {
+  const height = Math.max(VIEW.hud.buttonHeight, MIN_TOUCH);
+  const top = Math.min(
+    VIEW.hud.buttonTop - (height - VIEW.hud.buttonHeight) / 2,
+    domeHeight - height,
+  );
+  return { top, height };
+}
+
+/**
+ * How tall the band that hands the cargo over is — the lift row of the shaft.
+ * One cell is 80 design pixels, just under the minimum touch target, so the band
+ * is grown; the few pixels it borrows are the very top of the first row of rock,
+ * which stays tappable across the whole of the rest of its height.
+ */
+export function elevatorBandHeight(cellSize: number): number {
+  return Math.max(cellSize, MIN_TOUCH);
+}
 
 export const FONT_FAMILY = 'system-ui, sans-serif';
 

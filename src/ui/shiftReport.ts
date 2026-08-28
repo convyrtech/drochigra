@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
 import type { ShiftOutcome } from '../sim/progress.js';
 import type { ShiftReport } from '../sim/shift.js';
+import { makeTapTarget } from './tapTarget.js';
 
 /**
  * End of shift screen: what the shift produced, what it did to the profile, and
@@ -168,9 +169,8 @@ export function createShiftReport(
   const button = scene.add
     .rectangle(buttonX, buttonY, box.buttonWidth, box.buttonHeight, COLORS.button)
     .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.buttonEdge)
-    .setInteractive({ useHandCursor: true });
-  button.on(Phaser.Input.Events.POINTER_DOWN, onBack);
+    .setStrokeStyle(3, COLORS.buttonEdge);
+  makeTapTarget(button, onBack);
 
   const buttonText = scene.add
     .text(buttonX + box.buttonWidth / 2, buttonY + box.buttonHeight / 2, 'НА БАЗУ', {

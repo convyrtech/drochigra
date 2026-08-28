@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
 import { SFX } from '../game/sfx.js';
+import { makeTapTarget } from './tapTarget.js';
 import type { Balance } from '../sim/balance.js';
 import {
   canBuyUpgrade,
@@ -92,8 +93,7 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   const mute = scene.add
     .rectangle(width - base.margin - base.muteWidth, base.muteY, base.muteWidth, base.muteHeight, COLORS.panel)
     .setOrigin(0, 0)
-    .setStrokeStyle(2, COLORS.buttonEdge)
-    .setInteractive({ useHandCursor: true });
+    .setStrokeStyle(2, COLORS.buttonEdge);
   const muteLabel = scene.add
     .text(
       width - base.margin - base.muteWidth / 2,
@@ -107,7 +107,7 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     muteLabel.setText(muted ? 'ЗВУК: ВЫКЛ' : 'ЗВУК: ВКЛ');
     muteLabel.setColor(cssColor(muted ? COLORS.textDim : COLORS.text));
   };
-  mute.on(Phaser.Input.Events.POINTER_DOWN, () => {
+  makeTapTarget(mute, () => {
     SFX.setMuted(!SFX.isMuted());
     SFX.unlock();
     paintMute();
@@ -160,9 +160,8 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   const start = scene.add
     .rectangle(base.margin, startY, rowWidth, base.startHeight, COLORS.button)
     .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.buttonEdge)
-    .setInteractive({ useHandCursor: true });
-  start.on(Phaser.Input.Events.POINTER_DOWN, () => {
+    .setStrokeStyle(3, COLORS.buttonEdge);
+  makeTapTarget(start, () => {
     onStartShift(selectedRow);
   });
   const startLabel = centerText(
@@ -337,8 +336,7 @@ function createUpgradeRow(scene: Phaser.Scene, options: UpgradeRowOptions): Part
   const buy = scene.add
     .rectangle(buyX, buyY, base.buyWidth, base.buyHeight, COLORS.buttonOff)
     .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.buttonEdge)
-    .setInteractive({ useHandCursor: true });
+    .setStrokeStyle(3, COLORS.buttonEdge);
   const buyLabel = centerText(
     scene,
     buyX + base.buyWidth / 2,
@@ -349,7 +347,7 @@ function createUpgradeRow(scene: Phaser.Scene, options: UpgradeRowOptions): Part
   ).setOrigin(0.5, 0.5);
 
   let current: Profile | null = null;
-  buy.on(Phaser.Input.Events.POINTER_DOWN, () => {
+  makeTapTarget(buy, () => {
     if (current && canBuyUpgrade(balance, current, upgradeId)) {
       onBuy(upgradeId);
     }
@@ -403,9 +401,8 @@ function createChip(scene: Phaser.Scene, options: ChipOptions): ChipPart {
   const back = scene.add
     .rectangle(x, y, chipWidth, base.chipHeight, COLORS.buttonOff)
     .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.dugEdge)
-    .setInteractive({ useHandCursor: true });
-  back.on(Phaser.Input.Events.POINTER_DOWN, () => {
+    .setStrokeStyle(3, COLORS.dugEdge);
+  makeTapTarget(back, () => {
     onPick(row);
   });
   const label = centerText(
