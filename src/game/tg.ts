@@ -20,6 +20,8 @@ interface TelegramWebAppLike {
   expand?(): void;
   colorScheme?: 'light' | 'dark';
   themeParams?: { bg_color?: string; text_color?: string };
+  /** True when the user's Telegram client is at least a Bot API version. */
+  isVersionAtLeast?(version: string): boolean;
   /** Edge-to-edge Mini App (Bot API 8.0+). */
   requestFullscreen?(): Promise<boolean> | void;
   /** Keep the Mini App portrait (Bot API 8.0+). */
@@ -108,21 +110,27 @@ function applyTgTheme(): void {
  * fight over the screen orientation.
  */
 function setupFullscreenOnGesture(app: TelegramWebAppLike): void {
+  // Both calls need Bot API 8.0+. On older clients the official script prints a
+  // console error if they are attempted, so gate them on the version support.
+  const supported =
+    typeof app.isVersionAtLeast === 'function' && app.isVersionAtLeast('8.0');
   const onGesture = (): void => {
     try {
-      const fs = app.requestFullscreen?.();
-      if (fs && typeof (fs as Promise<unknown>).then === 'function') {
-        void (fs as Promise<unknown>).catch(() => {
-          // Fullscreen can be refused (no gesture / older WebView): the boxed
-          // layout below still holds, so there is nothing to do.
-        });
-      }
+      if (supported) {
+        const fs = app.requestFullscreen?.();
+        if (fs && typeof (fs as Promise<unknown>).then === 'function') {
+          void (fs as Promise<unknown>).catch(() => {
+            // Fullscreen can be refused (no gesture / older WebView): the boxed
+            // layout below still holds, so there is nothing to do.
+          });
+        }
 
-      const lock = app.lockOrientation?.();
-      if (lock && typeof (lock as Promise<unknown>).then === 'function') {
-        void (lock as Promise<unknown>).catch(() => {
-          // Lock may be unsupported: the «turn the phone» overlay covers it.
-        });
+        const lock = app.lockOrientation?.();
+        if (lock && typeof (lock as Promise<unknown>).then === 'function') {
+          void (lock as Promise<unknown>).catch(() => {
+            // Lock may be unsupported: the «turn the phone» overlay covers it.
+          });
+        }
       }
     } catch {
       // Best-effort only.
