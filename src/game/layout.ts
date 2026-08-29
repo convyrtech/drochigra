@@ -60,8 +60,14 @@ export const VIEW = {
   cellGap: 3,
   /** Where the surface label sits inside the entrance row, as a share of a cell. */
   surfaceLabelYShare: 0.28,
-  /** Drill size as a share of a cell. */
+  /** Drill size as a share of a cell, as the plain rectangle. */
   drillSizeShare: 0.62,
+  /**
+   * Drill size as a share of a cell once there is a sprite to draw. A
+   * machine needs more room than a marker: the rectangle only had to be
+   * seen, the drill has to be recognised.
+   */
+  drillArtSizeShare: 0.88,
   /** Height of the dig progress bar as a share of a cell. */
   digBarHeightShare: 0.16,
   /**
@@ -92,6 +98,23 @@ export const VIEW = {
     margin: 24,
     /** Banked scrap and crystals on the left, depth on the right. */
     statsY: 6,
+    /**
+     * The scrap and crystal icons of that line, when they exist. Two pictures
+     * and two numbers say what «СДАНО: 115 · КРИСТАЛЛЫ: 1» says, in half the
+     * width of a phone screen; with no icons the words come back.
+     */
+    statIconSize: 28,
+    statIconGap: 8,
+    /**
+     * Two dark bands laid over the sky sprite, so the text keeps its contrast
+     * whatever the generator painted up there. Only the top strip (stats,
+     * timer, wave) and the bottom strip (bars, status line, buttons) are
+     * covered — the middle, where the corridor and the shell are, stays open.
+     * With no sky sprite the panel is a flat field already and no band is drawn.
+     */
+    skyScrimAlpha: 0.62,
+    skyScrimTopHeight: 92,
+    skyScrimBottomTop: 256,
     /** The shift timer, centred. Wave labels sit beside it, so it is not huge. */
     timerY: 40,
     /** Wave number on the left, countdown to the next wave on the right. */
@@ -148,6 +171,21 @@ export const VIEW = {
     pickRadius: 48,
     beamWidth: 3,
     frameWidth: 10,
+    /**
+     * The shell sprite, when there is one: as wide as the drawn arc and
+     * anchored bottom-centre on `baseY`, so it stands exactly where the arc
+     * stood. Without the sprite none of these three are read at all and the arc
+     * is drawn as before.
+     */
+    artHeight: 88,
+    /** The turret sprite: square, centred here on the crown of the shell. */
+    turretArtSize: 56,
+    turretArtY: 182,
+    /**
+     * Where a beam starts once the turret is a sprite — its muzzle, which is
+     * higher than the apex of the bare arc. The arc keeps `apexY`.
+     */
+    muzzleY: 164,
     /** One full pulse of the alarm frame, in seconds. */
     framePulseSec: 1.1,
   },
@@ -426,6 +464,13 @@ export interface EnemyStyle {
   /** Half the size of the figure, in pixels. */
   readonly size: number;
   readonly color: number;
+  /**
+   * Side of the sprite, in pixels, when the enemy has one. Bigger than twice
+   * `size`: a shape only had to be told apart from two other shapes, a creature
+   * has to be looked at. Kept under the ~35 pixels between corridor lanes plus a
+   * little, so a wave reads as a crowd and not as a smear.
+   */
+  readonly spriteSize: number;
 }
 
 /**
@@ -433,12 +478,25 @@ export interface EnemyStyle {
  * balance; a type without a style here still gets drawn, just plainly.
  */
 export const ENEMY_STYLE: Record<string, EnemyStyle> = {
-  aberration: { shape: 'circle', size: 11, color: 0xff9a6b },
-  drowned: { shape: 'square', size: 13, color: 0x7fb0ff },
-  moth: { shape: 'triangle', size: 10, color: 0xd9a6ff },
+  aberration: { shape: 'circle', size: 11, color: 0xff9a6b, spriteSize: 34 },
+  drowned: { shape: 'square', size: 13, color: 0x7fb0ff, spriteSize: 40 },
+  moth: { shape: 'triangle', size: 10, color: 0xd9a6ff, spriteSize: 36 },
 };
 
-export const ENEMY_STYLE_FALLBACK: EnemyStyle = { shape: 'circle', size: 11, color: 0xe6ecff };
+export const ENEMY_STYLE_FALLBACK: EnemyStyle = {
+  shape: 'circle',
+  size: 11,
+  color: 0xe6ecff,
+  spriteSize: 34,
+};
+
+/**
+ * Where the health bar of an enemy sits under it. The bar has to clear whatever
+ * is drawn above it, and a sprite is taller than the shape it replaces.
+ */
+export function enemyBarOffset(style: EnemyStyle, hasSprite: boolean): number {
+  return hasSprite ? Math.round(style.spriteSize / 2) + 4 : VIEW.dome.enemyBarOffset;
+}
 
 /** Phaser text styles need a CSS colour, the shapes need the number. */
 export function cssColor(value: number): string {

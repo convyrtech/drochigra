@@ -1,7 +1,15 @@
 import Phaser from 'phaser';
 import { isDomeWarning, turretTarget, type Enemy } from '../sim/defense.js';
 import type { ShiftState } from '../sim/shift.js';
-import { COLORS, ENEMY_STYLE, ENEMY_STYLE_FALLBACK, VIEW } from './layout.js';
+import { ART, hasArt } from './artTextures.js';
+import {
+  COLORS,
+  enemyBarOffset,
+  ENEMY_STYLE,
+  ENEMY_STYLE_FALLBACK,
+  VIEW,
+  type EnemyStyle,
+} from './layout.js';
 
 /**
  * The dome and the fight in front of it: the shell with the turret on top, the
@@ -11,6 +19,13 @@ import { COLORS, ENEMY_STYLE, ENEMY_STYLE_FALLBACK, VIEW } from './layout.js';
  * Reads the shift state and paints it — nothing here decides anything. The
  * simulation keeps one number per enemy (progress, 0 at the edge and 1 at the
  * dome); turning that into a place on screen is this file's whole job.
+ *
+ * Every drawn thing here has two forms and picks one **once**, at build time,
+ * from whether its sprite was generated (`artTextures.ts`): the shell is either
+ * a sprite or the arc it always was, the turret either a sprite or the yellow
+ * block, each enemy either a sprite or its circle/square/triangle. They are
+ * independent — a shell with no turret sprite, or two enemies out of three, is a
+ * normal state and draws correctly.
  */
 export interface DomeView {
   readonly update: (state: ShiftState) => void;
@@ -42,14 +57,42 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
   const dome = VIEW.dome;
   const centerX = width / 2;
 
+  // The shell: a sprite standing on the base line where the arc stood, or the
+  // arc. The turret is asked separately, so one may exist without the other.
+  const shellArt = hasArt(scene, ART.dome)
+    ? scene.add
+        .image(centerX, dome.baseY, ART.dome)
+        .setOrigin(0.5, 1)
+        .setDisplaySize(dome.halfWidth * 2, dome.artHeight)
+        .setScrollFactor(0)
+        .setDepth(depth)
+    : null;
+  const turretArt = hasArt(scene, ART.turret)
+    ? scene.add
+        .image(centerX, dome.turretArtY, ART.turret)
+        .setDisplaySize(dome.turretArtSize, dome.turretArtSize)
+        .setScrollFactor(0)
+        .setDepth(depth)
+    : null;
+  /** Where a beam leaves the station: the sprite's muzzle, or the bare apex. */
+  const muzzleY = turretArt ? dome.muzzleY : dome.apexY;
+
   const shell = scene.add.graphics().setScrollFactor(0).setDepth(depth);
-  drawShell(shell, centerX);
+  drawShell(shell, centerX, { arc: shellArt === null, turret: turretArt === null });
 
   const fight = scene.add.graphics().setScrollFactor(0).setDepth(depth);
   const frame = scene.add.graphics().setScrollFactor(0).setDepth(frameDepth);
 
   /** Where each enemy was drawn last frame: taps are matched against this. */
   let spots: Spot[] = [];
+
+  /**
+   * Enemy sprites in use, by enemy id, plus the ones set aside for the next
+   * wave. A wave is a handful of creatures and they come and go every few
+   * seconds, so the images are reused instead of created and destroyed.
+   */
+  const enemyArt = new Map<number, Phaser.GameObjects.Image>();
+  const spareArt: Phaser.GameObjects.Image[] = [];
 
   /** Seconds of white flash left on an enemy that just took a hit. */
   const enemyFlash = new Map<number, number>();
@@ -77,6 +120,24 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
     };
   }
 
+  /** The sprite of an enemy type, or null when that one was never generated. */
+  function enemyArtKey(type: string): string | null {
+    const key = ART.enemyByType[type];
+    return key !== undefined && hasArt(scene, key) ? key : null;
+  }
+
+  /** The image an enemy is drawn with this frame, taken from the spare pile. */
+  function takeEnemyArt(id: number, key: string): Phaser.GameObjects.Image {
+    const existing = enemyArt.get(id);
+    if (existing) {
+      return existing;
+    }
+    const image =
+      spareArt.pop() ?? scene.add.image(0, 0, key).setScrollFactor(0).setDepth(depth);
+    enemyArt.set(id, image);
+    return image;
+  }
+
   return {
     update(state: ShiftState): void {
       const defense = state.defense;
@@ -97,6 +158,7 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
       }
 
       const target = turretTarget(defense);
+      const drawn = new Set<number>();
       for (let i = 0; i < defense.enemies.length; i += 1) {
         const enemy = defense.enemies[i];
         const spot = spots[i];
@@ -108,17 +170,44 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
           enemyFlash.set(enemy.id, FLASH_SEC);
         }
         lastHp.set(enemy.id, enemy.hp);
-        drawEnemy(fight, enemy, spot, enemyFlash.has(enemy.id), domeFlashSec > 0);
+
+        const style = ENEMY_STYLE[enemy.type] ?? ENEMY_STYLE_FALLBACK;
+        const hitFlash = enemyFlash.has(enemy.id);
+        const artKey = enemyArtKey(enemy.type);
+        if (artKey === null) {
+          drawEnemy(fight, style, spot, hitFlash, domeFlashSec > 0);
+        } else {
+          const image = takeEnemyArt(enemy.id, artKey);
+          image
+            .setTexture(artKey)
+            .setDisplaySize(style.spriteSize, style.spriteSize)
+            .setPosition(spot.x, spot.y)
+            // The sprites are drawn facing right; the right-hand side walks left.
+            .setFlipX(enemy.side === 'right')
+            .setVisible(true);
+          // A hit bleaches the creature to a white silhouette, the way the flat
+          // shape used to bleach to white.
+          if (hitFlash) {
+            image.setTintFill(0xffffff);
+          } else {
+            image.clearTint();
+          }
+          drawn.add(enemy.id);
+        }
+
+        drawEnemyBar(fight, enemy, spot, style, artKey !== null);
+
         if (enemy.id === defense.focusId) {
           fight.lineStyle(3, COLORS.target, 1);
           fight.strokeCircle(spot.x, spot.y, dome.targetRingRadius);
         }
         if (target && enemy.id === target.id) {
           fight.lineStyle(dome.beamWidth, COLORS.progress, 0.85);
-          fight.lineBetween(centerX, dome.apexY, spot.x, spot.y);
+          fight.lineBetween(centerX, muzzleY, spot.x, spot.y);
         }
       }
-      // Enemies that left the screen must not keep stale hp to compare against.
+      // Enemies that left the screen must not keep stale hp to compare against,
+      // and their sprites go back on the spare pile for the next wave.
       const liveIds = new Set(defense.enemies.map((enemy) => enemy.id));
       for (const id of [...lastHp.keys()]) {
         if (!liveIds.has(id)) {
@@ -126,9 +215,23 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
           enemyFlash.delete(id);
         }
       }
+      for (const [id, image] of [...enemyArt]) {
+        if (!drawn.has(id)) {
+          image.setVisible(false).clearTint();
+          enemyArt.delete(id);
+          spareArt.push(image);
+        }
+      }
 
-      if (domeFlashSec > 0) {
-        drawShell(shell, centerX, true);
+      if (shellArt) {
+        // The sprite reddens instead of being redrawn.
+        if (domeFlashSec > 0) {
+          shellArt.setTint(COLORS.warning);
+        } else {
+          shellArt.clearTint();
+        }
+      } else if (domeFlashSec > 0) {
+        drawShell(shell, centerX, { arc: true, turret: turretArt === null }, true);
       }
 
       frame.clear();
@@ -165,38 +268,59 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
   };
 }
 
-/** The shell is a shallow arc: it never moves, so it is drawn once. */
-function drawShell(shell: Phaser.GameObjects.Graphics, centerX: number, highlight = false): void {
+/** Which halves of the drawn station are still the graphics ones. */
+interface ShellParts {
+  readonly arc: boolean;
+  readonly turret: boolean;
+}
+
+/**
+ * The shell as a shallow arc with the turret block on it: whatever has no sprite
+ * of its own. It never moves, so it is drawn once — and again for one frame when
+ * the dome is hit.
+ */
+function drawShell(
+  shell: Phaser.GameObjects.Graphics,
+  centerX: number,
+  parts: ShellParts,
+  highlight = false,
+): void {
   const dome = VIEW.dome;
-  const points: Phaser.Math.Vector2[] = [];
-  for (let i = 0; i <= dome.arcSteps; i += 1) {
-    const share = i / dome.arcSteps;
-    const x = centerX - dome.halfWidth + 2 * dome.halfWidth * share;
-    const fromCenter = (x - centerX) / dome.halfWidth;
-    points.push(new Phaser.Math.Vector2(x, dome.apexY + (dome.baseY - dome.apexY) * fromCenter ** 2));
+  shell.clear();
+
+  if (parts.arc) {
+    const points: Phaser.Math.Vector2[] = [];
+    for (let i = 0; i <= dome.arcSteps; i += 1) {
+      const share = i / dome.arcSteps;
+      const x = centerX - dome.halfWidth + 2 * dome.halfWidth * share;
+      const fromCenter = (x - centerX) / dome.halfWidth;
+      points.push(
+        new Phaser.Math.Vector2(x, dome.apexY + (dome.baseY - dome.apexY) * fromCenter ** 2),
+      );
+    }
+
+    if (highlight) {
+      shell.fillStyle(COLORS.warning, 0.5);
+      shell.fillPoints(points, true, true);
+      shell.lineStyle(4, COLORS.warning, 0.9);
+      shell.strokePoints(points, false, false);
+    } else {
+      shell.fillStyle(COLORS.domeEdge, 0.16);
+      shell.fillPoints(points, true, true);
+      shell.lineStyle(3, COLORS.domeEdge, 1);
+      shell.strokePoints(points, false, false);
+    }
   }
 
-  // A flash redraws from scratch so the echo of the old fill never builds up.
-  if (highlight) {
-    shell.clear();
-    shell.fillStyle(COLORS.warning, 0.5);
-    shell.fillPoints(points, true, true);
-    shell.lineStyle(4, COLORS.warning, 0.9);
-    shell.strokePoints(points, false, false);
-  } else {
-    shell.fillStyle(COLORS.domeEdge, 0.16);
-    shell.fillPoints(points, true, true);
-    shell.lineStyle(3, COLORS.domeEdge, 1);
-    shell.strokePoints(points, false, false);
+  if (parts.turret) {
+    shell.fillStyle(COLORS.drill, 1);
+    shell.fillRect(
+      centerX - dome.turretWidth / 2,
+      dome.apexY - dome.turretHeight,
+      dome.turretWidth,
+      dome.turretHeight,
+    );
   }
-
-  shell.fillStyle(COLORS.drill, 1);
-  shell.fillRect(
-    centerX - dome.turretWidth / 2,
-    dome.apexY - dome.turretHeight,
-    dome.turretWidth,
-    dome.turretHeight,
-  );
 }
 
 /** Lighten a colour towards a hit-flash tint, mixing `amount` in [0,1]. */
@@ -213,15 +337,14 @@ function flashColor(color: number, tint: number, amount: number): number {
   return (r << 16) | (g << 8) | b;
 }
 
+/** An enemy with no sprite: the flat shape it has always been. */
 function drawEnemy(
   fight: Phaser.GameObjects.Graphics,
-  enemy: Enemy,
+  style: EnemyStyle,
   spot: Spot,
   hitFlash: boolean,
   domeFlash: boolean,
 ): void {
-  const dome = VIEW.dome;
-  const style = ENEMY_STYLE[enemy.type] ?? ENEMY_STYLE_FALLBACK;
   const { x, y } = spot;
   // A hit bleaches the enemy to white; a dome hit bleaches every enemy a little.
   let color = style.color;
@@ -240,13 +363,30 @@ function drawEnemy(
       fight.fillRect(x - style.size, y - style.size, style.size * 2, style.size * 2);
       break;
     case 'triangle':
-      fight.fillTriangle(x, y - style.size, x + style.size, y + style.size, x - style.size, y + style.size);
+      fight.fillTriangle(
+        x,
+        y - style.size,
+        x + style.size,
+        y + style.size,
+        x - style.size,
+        y + style.size,
+      );
       break;
   }
+}
 
+/** The health strip under an enemy, sprite or shape alike. */
+function drawEnemyBar(
+  fight: Phaser.GameObjects.Graphics,
+  enemy: Enemy,
+  spot: Spot,
+  style: EnemyStyle,
+  hasSprite: boolean,
+): void {
+  const dome = VIEW.dome;
   const share = enemy.maxHp > 0 ? Math.min(1, Math.max(0, enemy.hp / enemy.maxHp)) : 0;
-  const barX = x - dome.enemyBarWidth / 2;
-  const barY = y + dome.enemyBarOffset;
+  const barX = spot.x - dome.enemyBarWidth / 2;
+  const barY = spot.y + enemyBarOffset(style, hasSprite);
   fight.fillStyle(COLORS.shaft, 0.9);
   fight.fillRect(barX, barY, dome.enemyBarWidth, dome.enemyBarHeight);
   fight.fillStyle(share > 0.5 ? COLORS.progress : COLORS.warning, 1);

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { ART, hasArt } from '../game/artTextures.js';
 import { COLORS, cssColor, FONT_FAMILY, hudButtonHitZone, VIEW } from '../game/layout.js';
 import {
   domeHpShare,
@@ -45,7 +46,10 @@ export interface HudOptions {
 }
 
 /** Anything the panel pins to the screen and puts on its own depth. */
-type PinnedPart = Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text;
+type PinnedPart =
+  | Phaser.GameObjects.Rectangle
+  | Phaser.GameObjects.Text
+  | Phaser.GameObjects.Image;
 
 export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
   const { width, domeHeight, depth, onBank, onSalvo } = options;
@@ -54,10 +58,50 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
   const barWidth = (width - hud.margin * 2 - hud.barGap) / 2;
   const buttonWidth = (width - hud.margin * 2 - hud.buttonGap) / 2;
 
-  const panel = scene.add.rectangle(0, 0, width, domeHeight, COLORS.dome).setOrigin(0, 0);
+  // The polar night behind the station, or the flat navy field it replaces.
+  const sky = hasArt(scene, ART.sky);
+  const panel = sky
+    ? scene.add.image(0, 0, ART.sky).setOrigin(0, 0).setDisplaySize(width, domeHeight)
+    : scene.add.rectangle(0, 0, width, domeHeight, COLORS.dome).setOrigin(0, 0);
+  // Text over a picture needs something to sit on; text over the flat field
+  // already has it.
+  const scrims = sky
+    ? [
+        scene.add
+          .rectangle(0, 0, width, hud.skyScrimTopHeight, COLORS.dome, hud.skyScrimAlpha)
+          .setOrigin(0, 0),
+        scene.add
+          .rectangle(
+            0,
+            hud.skyScrimBottomTop,
+            width,
+            domeHeight - hud.skyScrimBottomTop,
+            COLORS.dome,
+            hud.skyScrimAlpha,
+          )
+          .setOrigin(0, 0),
+      ]
+    : [];
   const edge = scene.add.rectangle(0, domeHeight - 2, width, 2, COLORS.domeEdge).setOrigin(0, 0);
 
+  // Scrap and crystals: two icons and two numbers where there are icons for
+  // both, and the spelt-out line where there are not. Both or neither — one
+  // icon next to one Russian word would read as a bug.
+  const icons =
+    hasArt(scene, ART.scrap) && hasArt(scene, ART.crystal)
+      ? {
+          scrap: scene.add
+            .image(hud.margin, hud.statsY + hud.statIconSize / 2, ART.scrap)
+            .setOrigin(0, 0.5)
+            .setDisplaySize(hud.statIconSize, hud.statIconSize),
+          crystal: scene.add
+            .image(0, hud.statsY + hud.statIconSize / 2, ART.crystal)
+            .setOrigin(0, 0.5)
+            .setDisplaySize(hud.statIconSize, hud.statIconSize),
+        }
+      : null;
   const statsLeft = smallText(scene, hud.margin, hud.statsY, COLORS.scrap, 0);
+  const crystalCount = icons ? smallText(scene, 0, hud.statsY, COLORS.crystal, 0) : null;
   const statsRight = smallText(scene, width - hud.margin, hud.statsY, COLORS.textDim, 1);
 
   const timer = scene.add
@@ -112,10 +156,13 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
     onTap: onSalvo,
   });
 
-  const parts = [
+  const parts: PinnedPart[] = [
     panel,
+    ...scrims,
     edge,
+    ...(icons ? [icons.scrap, icons.crystal] : []),
     statsLeft,
+    ...(crystalCount ? [crystalCount] : []),
     statsRight,
     timer,
     waveLine,
@@ -134,7 +181,19 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
     update(state: ShiftState, faceVisible: boolean): void {
       const defense = state.defense;
       setText(timer, `СМЕНА ${formatTime(state.timeLeftSec)}`);
-      setText(statsLeft, `СДАНО: ${state.banked} · КРИСТАЛЛЫ: ${state.crystals}`);
+      if (icons && crystalCount) {
+        // The numbers grow and shrink, so the crystal icon is placed after the
+        // scrap number every frame rather than at a guessed offset.
+        setText(statsLeft, `${state.banked}`);
+        setText(crystalCount, `${state.crystals}`);
+        const numberX = hud.margin + hud.statIconSize + hud.statIconGap;
+        statsLeft.setX(numberX);
+        const crystalX = numberX + statsLeft.width + hud.statIconGap * 3;
+        icons.crystal.setX(crystalX);
+        crystalCount.setX(crystalX + hud.statIconSize + hud.statIconGap);
+      } else {
+        setText(statsLeft, `СДАНО: ${state.banked} · КРИСТАЛЛЫ: ${state.crystals}`);
+      }
       setText(statsRight, `ГЛУБИНА: ${state.deepestRow} / ${state.balance.shift.grid_depth}`);
 
       setText(waveLine, defense.wavesSent > 0 ? `ВОЛНА ${defense.wavesSent}` : 'ЗАТИШЬЕ');

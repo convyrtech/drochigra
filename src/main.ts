@@ -1,3 +1,4 @@
+import { loadArtIndex } from './game/artTextures.js';
 import { createGame } from './game/createGame.js';
 import { loadBalance } from './game/loadBalance.js';
 import { initTg, applyTgTheme, isTelegram } from './game/tg.js';
@@ -13,8 +14,10 @@ async function start(): Promise<void> {
   // local dev server and GitHub Pages keep working unchanged.
   initTg();
   applyTgTheme();
-  const balance = await loadBalance();
-  createGame(PARENT_ID, balance);
+  // The balance must load or there is no game; the art index is allowed to be
+  // missing, and then the game draws itself out of rectangles as it always did.
+  const [balance, art] = await Promise.all([loadBalance(), loadArtIndex()]);
+  createGame(PARENT_ID, balance, art);
   // `?fps=1` puts the frame counter on the screen (issue #8). Off by default:
   // the players must never see it, the checks always can.
   if (fpsRequested(window.location.search)) {

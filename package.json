@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "measure": "vitest run tests/balance.measure.test.ts --mode measure --reporter=verbose",
+    "art": "node scripts/art/generate.mjs",
     "typecheck": "tsc --noEmit",
     "test:e2e": "playwright test"
   },

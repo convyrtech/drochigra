@@ -38,6 +38,7 @@ import { createHud, type Hud } from '../ui/hud.js';
 import { showLayerBanner } from '../ui/layerBanner.js';
 import { createShiftReport } from '../ui/shiftReport.js';
 import { createVictoryScreen } from '../ui/victoryScreen.js';
+import { ART, hasArt, queueArt, sharpenArt, type ArtIndex } from './artTextures.js';
 import { createDomeView, type DomeView } from './domeView.js';
 import {
   faceScroll,
@@ -60,10 +61,12 @@ import { createFloatTextLayer, type FloatTextLayer } from '../ui/floatText.js';
 /** Depth order of the drawn parts. */
 const LAYER_DEPTH = {
   cells: 0,
-  labels: 1,
-  target: 2,
-  progress: 3,
-  drill: 4,
+  /** Rock and tunnel sprites, over the rectangles they replace. */
+  cellArt: 1,
+  labels: 2,
+  target: 3,
+  progress: 4,
+  drill: 5,
   faceButton: 8,
   hud: 10,
   dome: 11,
@@ -104,9 +107,19 @@ export class MainScene extends Phaser.Scene {
   private cellSize = 0;
   private domeHeight = 0;
 
+  /**
+   * The sprite over each cell rectangle, or an empty array while there is no
+   * cell art at all. The rectangles underneath are never removed: a sprite that
+   * was not generated simply leaves its own cell hidden and the rectangle shows
+   * through, so the shaft is drawable at every point of the migration.
+   */
+  private cellTiles: Phaser.GameObjects.Image[] = [];
+
   private target!: Phaser.GameObjects.Rectangle;
   private progress!: Phaser.GameObjects.Rectangle;
   private drill!: Phaser.GameObjects.Rectangle;
+  /** The drill sprite, when there is one; the rectangle is hidden behind it. */
+  private drillArt: Phaser.GameObjects.Image | null = null;
   private hud!: Hud;
   private faceButton: FaceButton | null = null;
   private domeView!: DomeView;
@@ -180,17 +193,34 @@ export class MainScene extends Phaser.Scene {
    */
   private pauseWired = false;
 
-  constructor(balance: Balance) {
+  /** Sprites that exist; see `artTextures.ts`. Empty means «all rectangles». */
+  private readonly art: ArtIndex;
+
+  constructor(balance: Balance, art: ArtIndex = []) {
     super('main');
     this.balance = balance;
+    this.art = art;
+  }
+
+  /**
+   * Only the sprites `content/art/index.json` names are asked for, so the game
+   * never fires a request for a file that is not there.
+   */
+  preload(): void {
+    queueArt(this, this.art);
   }
 
   create(): void {
+    // Pixel art must not be smoothed; done here rather than through Phaser's
+    // `pixelArt: true`, which would also coarsen the text.
+    sharpenArt(this, this.art);
     const { height } = this.scale.gameSize;
     this.domeHeight = height * VIEW.domeHeightShare;
     this.state = null;
     this.cellRects = [];
+    this.cellTiles = [];
     this.cellPainted = [];
+    this.drillArt = null;
     this.reportShown = false;
     this.announcedLayers = new Set<number>();
     // `scene.restart` reuses this instance, and the shift's own objects are gone
@@ -470,7 +500,9 @@ export class MainScene extends Phaser.Scene {
     this.state = state;
     this.cellSize = width / state.width;
     this.cellRects = [];
+    this.cellTiles = [];
     this.cellPainted = [];
+    this.drillArt = null;
     this.reportShown = false;
     // The layer the elevator drops the drill into is where the shift begins, not
     // a border it crossed: it is marked as seen so no banner greets the descent.
@@ -595,7 +627,13 @@ export class MainScene extends Phaser.Scene {
     });
   }
 
-  /** One rectangle per cell plus the surface label; colours change later. */
+  /**
+   * One rectangle per cell plus the surface label; colours change later.
+   *
+   * When there is cell art, a sprite goes on top of every rectangle — the
+   * rectangles stay where they are, hidden under the sprites, and come back into
+   * view by themselves for any cell whose particular sprite was never generated.
+   */
   private drawShaft(): void {
     const state = this.state;
     if (!state) {
@@ -603,6 +641,7 @@ export class MainScene extends Phaser.Scene {
     }
     const size = this.cellSize;
     const gap = VIEW.cellGap;
+    const cellArtKey = this.anyCellArtKey();
     for (let row = 0; row < state.rowCount; row += 1) {
       for (let col = 0; col < state.width; col += 1) {
         const rect = this.add
@@ -611,6 +650,15 @@ export class MainScene extends Phaser.Scene {
           .setDepth(LAYER_DEPTH.cells);
         this.cellRects.push(rect);
         this.cellPainted.push(null);
+        if (cellArtKey) {
+          this.cellTiles.push(
+            this.add
+              .image(col * size + gap / 2, row * size + gap / 2, cellArtKey)
+              .setOrigin(0, 0)
+              .setDisplaySize(size - gap, size - gap)
+              .setDepth(LAYER_DEPTH.cellArt),
+          );
+        }
       }
     }
     this.paintCells();
@@ -627,6 +675,9 @@ export class MainScene extends Phaser.Scene {
         },
       )
       .setOrigin(0.5)
+      // The lift row is a picture once the surface sprite exists, and white
+      // letters on a picture need an outline to stay letters.
+      .setStroke(cssColor(COLORS.shaft), 6)
       .setDepth(LAYER_DEPTH.labels);
 
     this.target = this.add
@@ -650,7 +701,40 @@ export class MainScene extends Phaser.Scene {
     this.drill = this.add
       .rectangle(0, 0, drillSize, drillSize, COLORS.drill)
       .setDepth(LAYER_DEPTH.drill);
+    if (hasArt(this, ART.drill)) {
+      const artSize = size * VIEW.drillArtSizeShare;
+      this.drillArt = this.add
+        .image(0, 0, ART.drill)
+        .setDisplaySize(artSize, artSize)
+        .setDepth(LAYER_DEPTH.drill);
+      this.drill.setVisible(false);
+    }
     this.paintDrill();
+  }
+
+  /**
+   * Any sprite that a cell could show, or null when the shaft has no art at all.
+   * A cell sprite needs some texture to be born with, and one is enough: which
+   * one each cell ends up showing is decided in `paintCells`.
+   */
+  private anyCellArtKey(): string | null {
+    for (const key of [ART.tunnel, ART.surface, ...ART.rockByLayer]) {
+      if (hasArt(this, key)) {
+        return key;
+      }
+    }
+    return null;
+  }
+
+  /** The sprite a cell of this row shows, or null while that one is missing. */
+  private cellArtKey(row: number, dug: boolean): string | null {
+    if (dug) {
+      const key = row === ENTRANCE_ROW ? ART.surface : ART.tunnel;
+      return hasArt(this, key) ? key : null;
+    }
+    const index = layerIndexForRow(this.balance.layers, row);
+    const key = ART.rockByLayer[index] ?? ART.rockByLayer[0];
+    return key !== undefined && hasArt(this, key) ? key : null;
   }
 
   /** Repaints only the cells that changed since the last frame. */
@@ -659,6 +743,8 @@ export class MainScene extends Phaser.Scene {
     if (!state) {
       return;
     }
+    const size = this.cellSize;
+    const gap = VIEW.cellGap;
     for (let row = 0; row < state.rowCount; row += 1) {
       const rockColor = this.rockColor(row);
       for (let col = 0; col < state.width; col += 1) {
@@ -683,6 +769,20 @@ export class MainScene extends Phaser.Scene {
           rect.fillColor = rockColor;
           rect.setStrokeStyle(0);
         }
+        // The sprite over this cell, if the shaft has any. A cell whose own
+        // sprite is missing hides its tile and shows the rectangle instead, so
+        // a half-generated set is still a whole picture.
+        const tile = this.cellTiles[index];
+        if (tile) {
+          const key = this.cellArtKey(row, dug);
+          if (key === null) {
+            tile.setVisible(false);
+          } else {
+            // setTexture resizes the image back to the frame, so the display
+            // size has to be re-applied after every swap.
+            tile.setTexture(key).setDisplaySize(size - gap, size - gap).setVisible(true);
+          }
+        }
         this.cellPainted[index] = dug;
       }
     }
@@ -701,8 +801,19 @@ export class MainScene extends Phaser.Scene {
     const size = this.cellSize;
     const { drill } = state;
     const target = drill.target;
+    const blocked = isCargoBlocked(state);
     this.drill.setPosition((drill.col + 0.5) * size, (drill.row + 0.5) * size);
-    this.drill.fillColor = isCargoBlocked(state) ? COLORS.drillStuck : COLORS.drill;
+    this.drill.fillColor = blocked ? COLORS.drillStuck : COLORS.drill;
+    if (this.drillArt) {
+      this.drillArt.setPosition((drill.col + 0.5) * size, (drill.row + 0.5) * size);
+      // Same warning the rectangle gave by turning red: cargo is full and the
+      // drill has stopped.
+      if (blocked) {
+        this.drillArt.setTint(COLORS.drillStuck);
+      } else {
+        this.drillArt.clearTint();
+      }
+    }
 
     const digging = target?.kind === 'cell';
     this.target.setVisible(digging);
