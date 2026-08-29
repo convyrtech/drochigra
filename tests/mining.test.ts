@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import balanceJson from '../content/balance.json' with { type: 'json' };
 import type { Balance } from '../src/sim/balance.js';
-import { baseDigTimeSec, digTimeSec, layerForRow } from '../src/sim/mining.js';
+import { baseDigTimeSec, cellYield, digTimeSec, layerForRow } from '../src/sim/mining.js';
 
 const balance = balanceJson as unknown as Balance;
 const layers = balance.layers;
@@ -79,13 +79,21 @@ describe('digTimeSec', () => {
   it('changes exactly at the layer boundaries', () => {
     for (const { index, last, next } of boundaries()) {
       expect(digTimeSec(layers, last, 1)).toBeCloseTo(digTimeSec(layers, layerAt(index).rows[0], 1), 10);
-      expect(digTimeSec(layers, next, 1)).toBeGreaterThan(digTimeSec(layers, last, 1));
+      expect(digTimeSec(layers, next, 1)).not.toBeCloseTo(digTimeSec(layers, last, 1), 10);
     }
   });
 
-  it('gets slower with every deeper layer', () => {
+  it('pays more per second of digging with every deeper layer', () => {
+    // This used to read «gets slower with every deeper layer», and the rock of
+    // the Abyss now goes the other way: the ice cap is the hardest thing in it,
+    // and deeper the rock is looser. What grows with depth is what a second of
+    // drilling is worth — the cell pays more and the road home is longer, which
+    // is the price PLAN_V1 §4 names. Guarding the hardness itself would have
+    // guarded the flavour text; this guards the reason to dig deeper.
     for (const { last, next } of boundaries()) {
-      expect(digTimeSec(layers, last, 1)).toBeLessThan(digTimeSec(layers, next, 1));
+      const shallow = cellYield(layers, last) / digTimeSec(layers, last, 1);
+      const deep = cellYield(layers, next) / digTimeSec(layers, next, 1);
+      expect(deep).toBeGreaterThan(shallow);
     }
   });
 

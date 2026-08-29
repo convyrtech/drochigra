@@ -110,22 +110,50 @@ function runUntilIdle(state: ShiftState, stepSec = 1): void {
 /**
  * Digs one cell to the end and returns the time spent. Waits until the drill
  * has driven into the fresh cell, which is where the next order starts from.
+ *
+ * Hands the cargo over on the way when the cell no longer fits it, and only
+ * then: how many cells of a layer fit one cargo is a balance number (two of the
+ * first layer today, one of the third), and a helper that assumed a shaft could
+ * be sunk on one backpack would break the next time it changes.
+ *
+ * The seconds it returns are the seconds the caller asked for — the digging —
+ * plus, on the one call per cargo where the drill had to go up first, the trip.
+ * Callers that time a single cell (`digSec`) never hit that: they dig the first
+ * cell of a fresh shift into an empty backpack.
  */
 function digCell(state: ShiftState, col: number, row: number): number {
-  expect(aimDrill(state, col, row)).toBe(true);
   let spent = 0;
   const limit = 2000;
-  for (let guard = 0; guard < limit; guard += 1) {
-    if (state.phase !== 'running') {
-      return spent;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    expect(aimDrill(state, col, row)).toBe(true);
+    for (let guard = 0; guard < limit; guard += 1) {
+      if (state.phase !== 'running') {
+        return spent;
+      }
+      if (isDug(state, col, row) && state.drill.col === col && state.drill.row === row) {
+        return spent;
+      }
+      if (isCargoBlocked(state)) {
+        bankCargo(state);
+        break;
+      }
+      step(state, 0.05);
+      spent += 0.05;
     }
-    if (isDug(state, col, row) && state.drill.col === col && state.drill.row === row) {
-      return spent;
-    }
-    step(state, 0.05);
-    spent += 0.05;
   }
   throw new Error(`cell ${col},${row} was not dug in ${limit} steps`);
+}
+
+/** Sends the drill up, waits out the hand-over and leaves it idle at the top. */
+function bankCargo(state: ShiftState): void {
+  expect(callElevator(state)).toBe(true);
+  for (let guard = 0; guard < 20000; guard += 1) {
+    if (state.phase !== 'running' || state.drill.mode === 'idle') {
+      return;
+    }
+    step(state, 0.05);
+  }
+  throw new Error('the cargo was never handed over');
 }
 
 /** Straight tunnel down a column, from the entrance to `toRow` inclusive. */
@@ -446,9 +474,16 @@ describe('dig time by layer', () => {
       const nextRow = digCell(state, START_COL, last + 1);
       const road = travelSec(1);
 
+      // Each row costs its own layer, to the step of the loop above. The test
+      // used to say «the next row costs more», which quietly assumed the rock
+      // gets harder with depth; it no longer does (see tests/mining.test.ts —
+      // what grows with depth is the scrap a second of drilling is worth), so
+      // the check now reads both numbers out of balance instead.
+      const slack = 0.1;
       expect(lastRow).toBeGreaterThanOrEqual(digSec(index) + road);
-      expect(lastRow).toBeLessThan(digSec(index + 1) + road);
+      expect(lastRow).toBeLessThan(digSec(index) + road + slack);
       expect(nextRow).toBeGreaterThanOrEqual(digSec(index + 1) + road);
+      expect(nextRow).toBeLessThan(digSec(index + 1) + road + slack);
     }
   });
 
@@ -743,7 +778,9 @@ describe('step guards', () => {
     // narrower than the distance the drill covers in one slack of time.
     const gap = (SLACK_SEC + SLACK_SEC * speed) / 2;
 
-    const state = createShift(balance, 1);
+    // A cargo big enough that the drill never blocks: this test is about the
+    // clock, and one cell of the first layer now fills the real backpack.
+    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
     expect(aimDrill(state, START_COL, 1)).toBe(true);
     step(state, digSec(0));
     // The cell is open and the drill is driving into it, one whole cell away.
@@ -965,7 +1002,10 @@ describe('the conveyor hands the scrap over by itself', () => {
     const state = createShift(
       balanceWith({
         domeHp: ABERRATION_DAMAGE,
-        firstWaveSec: 1,
+        // The wave comes out after the first cell is in the bank. How long a
+        // cell takes is a balance number and it is now longer than an enemy's
+        // walk, so the wave is timed off the cell instead of off a written-in 1.
+        firstWaveSec: PER_CELL_SEC + 1,
         enemyHpBase: UNKILLABLE,
         cargoCapacity: 1e6,
       }),
@@ -973,8 +1013,6 @@ describe('the conveyor hands the scrap over by itself', () => {
       { autoBank: true },
     );
     expect(aimDrill(state, START_COL, 1)).toBe(true);
-    // One cell handed over before the enemy finishes its walk: how long a cell
-    // takes is a balance number, so it is taken from balance and not written in.
     step(state, PER_CELL_SEC + 0.01);
     const banked = state.banked;
     expect(banked).toBeGreaterThan(0);

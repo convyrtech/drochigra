@@ -40,7 +40,15 @@ import {
   walletAmount,
   type Profile,
 } from '../src/sim/progress.js';
-import { ENTRANCE_ROW, type ShiftEndReason, type ShiftReport } from '../src/sim/shift.js';
+import {
+  aimDrill,
+  canDig,
+  createShift,
+  ENTRANCE_ROW,
+  step as stepShift,
+  type ShiftEndReason,
+  type ShiftReport,
+} from '../src/sim/shift.js';
 
 const balance = balanceJson as unknown as Balance;
 
@@ -68,12 +76,19 @@ function item(id: string): UpgradeItemBalance {
 }
 
 /** Balance variant. Tests bend single numbers, they never invent new ones. */
-function balanceWith(patch: { checkpointEveryRows?: number }): Balance {
+function balanceWith(patch: {
+  checkpointEveryRows?: number;
+  checkpointRows?: readonly number[];
+  gridDepth?: number;
+}): Balance {
+  const rows = patch.checkpointRows ?? balance.shift.checkpoint_rows;
   return {
     ...balance,
     shift: {
       ...balance.shift,
       checkpoint_every_rows: patch.checkpointEveryRows ?? balance.shift.checkpoint_every_rows,
+      ...(rows === undefined ? {} : { checkpoint_rows: rows }),
+      grid_depth: patch.gridDepth ?? balance.shift.grid_depth,
     },
   };
 }
@@ -356,20 +371,51 @@ describe('effectiveBalance', () => {
     expect(fresh.dome.hp_base).toBeCloseTo(balance.dome.hp_base, 10);
     expect(fresh.cargo.capacity_base).toBeCloseTo(balance.cargo.capacity_base, 10);
     // Everything the levels do not touch is the balance that was passed in.
-    expect(fresh.layers).toBe(balance.layers);
+    // The layers are rebuilt, not passed through — the cargo branch moves the
+    // yield with the capacity (see effectiveBalance) — so they are compared by
+    // value, and at level zero the value has to be the same.
+    expect(fresh.layers).toEqual(balance.layers);
     expect(fresh.shift).toBe(balance.shift);
     expect(fresh.waves).toBe(balance.waves);
     expect(fresh.upgrades).toBe(balance.upgrades);
   });
 
-  it('bends the drill speed by the drill step and nothing else', () => {
+  it('bends both halves of the drill — digging and driving — by the drill step', () => {
+    // One machine, one number: a drill level speeds the digging and the road by
+    // the same share. Without that, a fast drill quietly makes the shallow layer
+    // the richest one, because only the shallow layer has almost no road — see
+    // the comment in effectiveBalance.
     const step = item(DRILL).step;
     for (const level of [1, 3, 7]) {
       const bent = effectiveBalance(balance, { [DRILL]: level });
       expect(bent.drill.speed_base).toBeCloseTo(balance.drill.speed_base * (1 + step * level), 10);
-      expect(bent.drill.move_rows_per_sec).toBeCloseTo(balance.drill.move_rows_per_sec, 10);
+      expect(bent.drill.move_rows_per_sec).toBeCloseTo(
+        balance.drill.move_rows_per_sec * (1 + step * level),
+        10,
+      );
       expect(bent.cargo.capacity_base).toBeCloseTo(balance.cargo.capacity_base, 10);
       expect(bent.turret.dps_base).toBeCloseTo(balance.turret.dps_base, 10);
+      // The ore is the cargo branch's business, not the drill's.
+      expect(bent.layers).toEqual(balance.layers);
+    }
+  });
+
+  it('bends the ore with the backpack: the cargo branch moves both', () => {
+    // The rule PLAN_V1 §2.6 rests on: how many cells fit one trip is
+    // `floor(capacity / yield)`, and a purchase that changes it changes the
+    // silence between two decisions by a whole cell.
+    const step = item(CARGO).step;
+    for (const level of [1, 5, 17]) {
+      const bent = effectiveBalance(balance, { [CARGO]: level });
+      const share = 1 + step * level;
+      expect(bent.cargo.capacity_base).toBeCloseTo(balance.cargo.capacity_base * share, 10);
+      bent.layers.forEach((layer, index) => {
+        const base = balance.layers[index]?.yield ?? 0;
+        expect(layer.yield).toBe(Math.round(base * share));
+        expect(Math.floor(bent.cargo.capacity_base / layer.yield)).toBe(
+          Math.floor(balance.cargo.capacity_base / base),
+        );
+      });
     }
   });
 
@@ -459,24 +505,64 @@ describe('hasConveyor', () => {
   });
 });
 
+/** The same balance with the explicit checkpoint list dropped, so the even
+ *  spacing of `checkpoint_every_rows` is what answers. */
+function withoutCheckpointList(from: Balance): Balance {
+  const { checkpoint_rows: _dropped, ...shift } = from.shift;
+  return { ...from, shift };
+}
+
 describe('checkpoints', () => {
-  it('puts one on the surface and then every checkpoint_every_rows down to the bottom', () => {
-    const every = balance.shift.checkpoint_every_rows;
+  it('starts on the surface, climbs down in order and never leaves the grid', () => {
+    // The rows themselves are a balance decision — evenly spaced or listed one
+    // by one (`shift.checkpoint_rows`), whichever fits the layers — so the test
+    // holds the shape and not the spacing.
     const rows = checkpointRows(balance);
+    expect(rows[0]).toBe(ENTRANCE_ROW);
+    expect(rows.length).toBeGreaterThan(1);
+    for (let index = 1; index < rows.length; index += 1) {
+      expect(rows[index]).toBeGreaterThan(rows[index - 1] ?? 0);
+    }
+    expect(rows[rows.length - 1]).toBeLessThanOrEqual(balance.shift.grid_depth);
+  });
+
+  it('takes a hand-written list as it comes: sorted, deduplicated, inside the mine', () => {
+    // balance.json is edited by hand and promises «правь смело», so the list is
+    // taken as an intent and not as a contract. Everything downstream reads the
+    // result as a ladder — the elevator drops on the last row, the base screen
+    // draws the chips in order — so a typo has to be repaired here or it becomes
+    // a game that starts a shift outside the grid.
+    expect(checkpointRows(balanceWith({ checkpointRows: [-5, 0, 24] }))).toEqual([0, 24]);
+    expect(checkpointRows(balanceWith({ checkpointRows: [24, 0, 12, 24] }))).toEqual([0, 12, 24]);
+    expect(checkpointRows(balanceWith({ checkpointRows: [12, 24] }))).toEqual([0, 12, 24]);
+    // Deeper than the grid is a chip that cannot be started, so it is clipped —
+    // exactly what the even-spacing branch below has always done.
+    const shallow = balanceWith({ checkpointRows: [0, 24, 999], gridDepth: 48 });
+    expect(checkpointRows(shallow)).toEqual([0, 24]);
+    // A fractional row still means the row the owner was aiming at.
+    expect(checkpointRows(balanceWith({ checkpointRows: [24.5, 24] }))).toEqual([0, 24]);
+    // Nothing usable in the list still leaves a mine that can be entered.
+    expect(checkpointRows(balanceWith({ checkpointRows: [-1, Number.NaN] }))).toEqual([0]);
+  });
+
+  it('spaces them evenly when balance gives a step instead of a list', () => {
+    const every = 7;
+    const even = balanceWith({ checkpointEveryRows: every });
+    const rows = checkpointRows(withoutCheckpointList(even));
     expect(rows[0]).toBe(ENTRANCE_ROW);
     for (let index = 1; index < rows.length; index += 1) {
       expect(rows[index]).toBe(ENTRANCE_ROW + every * index);
     }
-    expect(rows[rows.length - 1]).toBeLessThanOrEqual(balance.shift.grid_depth);
-    expect((rows[rows.length - 1] ?? 0) + every).toBeGreaterThan(balance.shift.grid_depth);
+    expect((rows[rows.length - 1] ?? 0) + every).toBeGreaterThan(even.shift.grid_depth);
   });
 
   it('keeps the surface only when balance switches the checkpoints off', () => {
-    expect(checkpointRows(balanceWith({ checkpointEveryRows: 0 }))).toEqual([ENTRANCE_ROW]);
+    const off = balanceWith({ checkpointEveryRows: 0 });
+    expect(checkpointRows(withoutCheckpointList(off))).toEqual([ENTRANCE_ROW]);
   });
 
   it('opens a checkpoint only once the player has dug that deep', () => {
-    const every = balance.shift.checkpoint_every_rows;
+    const every = checkpointRows(balance)[1] ?? 0;
     const shallow = profileWith({ deepestRow: every - 1 });
     expect(isCheckpointOpen(shallow, ENTRANCE_ROW)).toBe(true);
     expect(isCheckpointOpen(shallow, every)).toBe(false);
@@ -491,15 +577,15 @@ describe('checkpoints', () => {
   });
 
   it('opens every checkpoint above the depth reached, not just the deepest one', () => {
-    const every = balance.shift.checkpoint_every_rows;
-    const deep = profileWith({ deepestRow: every * 3 + 1 });
+    const ladder = checkpointRows(balance);
+    const deep = profileWith({ deepestRow: (ladder[3] ?? 0) + 1 });
     expect(openCheckpointRows(balance, deep)).toEqual([
       ENTRANCE_ROW,
-      every,
-      every * 2,
-      every * 3,
+      ladder[1] ?? 0,
+      ladder[2] ?? 0,
+      ladder[3] ?? 0,
     ]);
-    expect(deepestOpenCheckpoint(balance, deep)).toBe(every * 3);
+    expect(deepestOpenCheckpoint(balance, deep)).toBe(ladder[3] ?? 0);
   });
 
   it('opens the bottom checkpoint for a profile that reached the bottom', () => {
@@ -575,25 +661,29 @@ describe('applyShiftResult', () => {
   });
 
   it('pays the crystals of a new checkpoint once and never again', () => {
-    const every = balance.shift.checkpoint_every_rows;
+    // Two checkpoints down, wherever balance puts them: the ladder may be
+    // uneven, so the rows come out of it instead of being multiplied.
+    const ladder = checkpointRows(balance);
+    const second = ladder[2] ?? 0;
+    const third = ladder[3] ?? 0;
     const perCheckpoint = balance.shift.crystals_per_new_checkpoint;
     const fresh = createProfile(balance);
 
     // First trip down to the second checkpoint: two rows opened, two payments.
-    const first = applyShiftResult(balance, fresh, report({ deepestRow: every * 2 }));
+    const first = applyShiftResult(balance, fresh, report({ deepestRow: second }));
     expect(first.newCheckpoints).toBe(2);
     expect(first.checkpointCrystals).toBe(2 * perCheckpoint);
     expect(walletAmount(first.profile, CRYSTAL)).toBe(2 * perCheckpoint);
-    expect(first.profile.deepestRow).toBe(every * 2);
+    expect(first.profile.deepestRow).toBe(second);
 
     // Down the same shaft again: nothing new is open, so nothing is paid.
-    const again = applyShiftResult(balance, first.profile, report({ deepestRow: every * 2 }));
+    const again = applyShiftResult(balance, first.profile, report({ deepestRow: second }));
     expect(again.newCheckpoints).toBe(0);
     expect(again.checkpointCrystals).toBe(0);
     expect(walletAmount(again.profile, CRYSTAL)).toBe(2 * perCheckpoint);
 
     // One checkpoint deeper: only that one pays.
-    const deeper = applyShiftResult(balance, again.profile, report({ deepestRow: every * 3 }));
+    const deeper = applyShiftResult(balance, again.profile, report({ deepestRow: third }));
     expect(deeper.newCheckpoints).toBe(1);
     expect(walletAmount(deeper.profile, CRYSTAL)).toBe(3 * perCheckpoint);
   });
@@ -886,13 +976,11 @@ describe('profileFromSaved', () => {
     const loaded = profileFromSaved(balance, {
       version: SAVE_VERSION,
       wallet: { [SCRAP]: upgradeCost(balance, DRILL, 0) },
-      deepestRow: balance.shift.checkpoint_every_rows,
+      deepestRow: checkpointRows(balance)[1] ?? 0,
     });
     expect(loaded).not.toBeNull();
     expect(canBuyUpgrade(balance, loaded as Profile, DRILL)).toBe(true);
-    expect(deepestOpenCheckpoint(balance, loaded as Profile)).toBe(
-      balance.shift.checkpoint_every_rows,
-    );
+    expect(deepestOpenCheckpoint(balance, loaded as Profile)).toBe(checkpointRows(balance)[1] ?? 0);
     expect(shiftQuota(balance, loaded as Profile)).toBe(balance.shift.quota_min);
   });
 });
@@ -1098,6 +1186,37 @@ describe('touchVisit', () => {
 
 /* ------------------------------------------------------------ five-year plan */
 
+/**
+ * Plans the five-year tests run in: the first, the one winning hands out, the
+ * one after it, and a far one where the multiplier has compounded four times.
+ */
+const MEASURED_PLANS: readonly number[] = [1, 2, 3, 5];
+
+/**
+ * Scrap the drill actually puts in the backpack in one plan, in one layer.
+ *
+ * The five-year plan is the reward for reaching the bottom, so every plan is a
+ * state the game is certain to be played in, and «the numbers multiplied
+ * correctly» is not the question worth asking about it. This one is: it drops a
+ * drill at the top of the layer, taps the cell under it and runs the real
+ * simulation for a minute. Zero means the mine is dead — the cell does not fit
+ * an empty cargo, the drill blocks itself, and no arithmetic assertion notices.
+ */
+function dugOneCell(plan: number, layerIndex: number): number {
+  const bent = shiftBalance(balance, profileWith({ fiveYearPlan: plan }));
+  const top = bent.layers[layerIndex]?.rows[0] ?? ENTRANCE_ROW;
+  const state = createShift(bent, 1, { startRow: top });
+  const col = Math.floor(bent.shift.grid_width / 2);
+  const row = Math.min(top + 1, bent.shift.grid_depth);
+  expect(canDig(state, col, row)).toBe(true);
+  expect(aimDrill(state, col, row)).toBe(true);
+  for (let tick = 0; tick < 60; tick += 1) {
+    stepShift(state, 1);
+  }
+  return state.cargo + state.banked;
+}
+
+
 describe('planTier', () => {
   it('counts the first plan as tier zero', () => {
     expect(planTier(1)).toBe(0);
@@ -1131,6 +1250,42 @@ describe('planBalance', () => {
     balance.layers.forEach((layer, index) => {
       expect(fourth.layers[index]?.yield).toBeCloseTo(layer.yield * mult ** 3, 10);
     });
+  });
+
+  it('lifts the cargo by the same factor as the ore, so a trip stays a trip', () => {
+    // The rule of §2.6: a trip is `floor(capacity / yield)` cells and two
+    // decisions. A plan that doubles the ore and leaves the backpack at 96 does
+    // not make the trip shorter, it makes it *nothing* — see the dig below.
+    const mult = balance.prestige.yield_mult_per_tier;
+    expect(planBalance(balance, 2).cargo.capacity_base).toBeCloseTo(
+      balance.cargo.capacity_base * mult,
+      10,
+    );
+    expect(planBalance(balance, 5).cargo.capacity_base).toBeCloseTo(
+      balance.cargo.capacity_base * mult ** 4,
+      10,
+    );
+    for (const plan of MEASURED_PLANS) {
+      const bent = planBalance(balance, plan);
+      bent.layers.forEach((layer, index) => {
+        expect(
+          Math.floor(bent.cargo.capacity_base / layer.yield),
+          `пятилетка ${plan}, ${layer.id}`,
+        ).toBe(Math.floor(balance.cargo.capacity_base / (balance.layers[index]?.yield ?? 1)));
+      });
+    }
+  });
+
+  it('leaves a mine that can actually be dug in every plan', () => {
+    // The question the arithmetic above cannot answer, and the one that was not
+    // asked when the plan started multiplying the yield: does the drill still
+    // dig? A cell whose ore does not fit an empty cargo is never started at all,
+    // so the shift spends six minutes handing over an empty backpack.
+    for (const plan of MEASURED_PLANS) {
+      for (let index = 0; index < balance.layers.length; index += 1) {
+        expect(dugOneCell(plan, index), `пятилетка ${plan}, слой ${index + 1}`).toBeGreaterThan(0);
+      }
+    }
   });
 
   it('multiplies the base health of an enemy once per tier', () => {
@@ -1178,7 +1333,11 @@ describe('shiftBalance', () => {
     const profile = profileWith({ fiveYearPlan: 3, upgrades: { [DRILL]: 2, [CARGO]: 1 } });
     const combined = shiftBalance(balance, profile);
     const yieldMult = balance.prestige.yield_mult_per_tier ** 2;
-    expect(combined.layers[0]?.yield).toBeCloseTo((balance.layers[0]?.yield ?? 0) * yieldMult, 10);
+    // The plan doubles the ore and the cargo level lifts it again with the
+    // backpack, so both multipliers are on the layer.
+    expect(combined.layers[0]?.yield).toBe(
+      Math.round((balance.layers[0]?.yield ?? 0) * yieldMult * (1 + item(CARGO).step)),
+    );
     expect(combined.waves.enemy_hp_base).toBeCloseTo(
       balance.waves.enemy_hp_base * balance.prestige.wave_hp_mult_per_tier ** 2,
       10,
@@ -1187,17 +1346,48 @@ describe('shiftBalance', () => {
       balance.drill.speed_base * (1 + item(DRILL).step * 2),
       10,
     );
+    // The backpack carries both multipliers too, for the same reason the ore
+    // does: the plan lifts it so the trip survives the richer ore, the level
+    // lifts it again. `floor(capacity / yield)` is what has to come out
+    // unchanged, and the cells-per-trip check below is the one that says so.
     expect(combined.cargo.capacity_base).toBeCloseTo(
-      balance.cargo.capacity_base * (1 + item(CARGO).step),
+      balance.cargo.capacity_base * yieldMult * (1 + item(CARGO).step),
       10,
     );
+    combined.layers.forEach((layer, index) => {
+      expect(Math.floor(combined.cargo.capacity_base / layer.yield), layer.id).toBe(
+        Math.floor(balance.cargo.capacity_base / (balance.layers[index]?.yield ?? 1)),
+      );
+    });
+    // And the mine digs: the whole point of the two multipliers being one.
+    expect(dugOneCell(3, balance.layers.length - 1)).toBeGreaterThan(0);
   });
 
-  it('gives the same numbers whichever way round the two are applied', () => {
-    const profile = profileWith({ fiveYearPlan: 4, upgrades: { [DRILL]: 3, [DOME]: 2, [SALVO]: 4 } });
-    const planFirst = shiftBalance(balance, profile);
-    const upgradesFirst = planBalance(effectiveBalance(balance, profile.upgrades), profile.fiveYearPlan);
-    expect(planFirst).toEqual(upgradesFirst);
+  it('puts the plan first, and the order shows only in the rounding of the ore', () => {
+    // Both sides scale the same two numbers now — the backpack and the ore — and
+    // scaling commutes, so for branches that do not touch them the order is free.
+    const untouched = profileWith({ fiveYearPlan: 4, upgrades: { [DRILL]: 3, [DOME]: 2, [SALVO]: 4 } });
+    expect(shiftBalance(balance, untouched)).toEqual(
+      planBalance(effectiveBalance(balance, untouched.upgrades), untouched.fiveYearPlan),
+    );
+
+    // With a cargo level the two do differ, and the reason is written down in
+    // `shiftBalance`: the yield is rounded to a whole scrap, and rounding does
+    // not commute with multiplication. The difference is at most one scrap, and
+    // the order is fixed so the rounding happens once — on the number the HUD
+    // shows — instead of being multiplied up by the plan.
+    const cargo = profileWith({ fiveYearPlan: 2, upgrades: { [CARGO]: 4 } });
+    const planFirst = shiftBalance(balance, cargo);
+    const upgradesFirst = planBalance(effectiveBalance(balance, cargo.upgrades), cargo.fiveYearPlan);
+    expect(planFirst.cargo.capacity_base).toBeCloseTo(upgradesFirst.cargo.capacity_base, 10);
+    planFirst.layers.forEach((layer, index) => {
+      expect(Math.abs(layer.yield - (upgradesFirst.layers[index]?.yield ?? 0)), layer.id).toBeLessThanOrEqual(1);
+      // Whichever way round, a trip is the same number of cells: that is the
+      // property the game depends on, and it does not care about the last scrap.
+      expect(Math.floor(planFirst.cargo.capacity_base / layer.yield), layer.id).toBe(
+        Math.floor(balance.cargo.capacity_base / (balance.layers[index]?.yield ?? 1)),
+      );
+    });
   });
 });
 

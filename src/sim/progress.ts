@@ -259,10 +259,24 @@ export function effectiveBalance(balance: Balance, upgrades: UpgradeLevels): Bal
     drill: {
       ...balance.drill,
       speed_base: scaled(balance.drill.speed_base, step(DRILL_ID), level(DRILL_ID)),
+      // The drill is one machine: a level of it makes the same motor dig and
+      // drive faster. This is not decoration — it is what keeps «глубже
+      // выгоднее» true at every drill level.
+      //
+      // A trip is `digging + road`, and the road grows with depth while the
+      // digging does not. Speed up the digging alone and every trip converges
+      // on its road, so the shallow layer — the one with almost no road — wins
+      // on scrap per minute as soon as the drill is fast enough. Measured: at
+      // twenty drill levels the first layer overtook the second. Scaling both
+      // halves of the trip by the same number makes the ratio between layers
+      // independent of the drill entirely.
+      //
+      // The elevator branch still tilts it, and in the right direction: it
+      // shortens the road only, so it helps the deep layers most.
       move_rows_per_sec: scaled(
-        balance.drill.move_rows_per_sec,
-        step(ELEVATOR_ID),
-        level(ELEVATOR_ID),
+        scaled(balance.drill.move_rows_per_sec, step(ELEVATOR_ID), level(ELEVATOR_ID)),
+        step(DRILL_ID),
+        level(DRILL_ID),
       ),
     },
     turret: {
@@ -283,6 +297,41 @@ export function effectiveBalance(balance: Balance, upgrades: UpgradeLevels): Bal
       ...balance.cargo,
       capacity_base: scaled(balance.cargo.capacity_base, step(CARGO_ID), level(CARGO_ID)),
     },
+    // The cargo branch moves the backpack and the ore it carries by the same
+    // share, and that is the whole point of it (PLAN_V1 §7).
+    //
+    // How many cells fit one trip is `floor(capacity / yield)`, and a trip is
+    // two decisions with one long silence between them (PLAN_V1 §2.6). Move the
+    // capacity alone and that floor steps up — two cells become three — while
+    // the drill only ever gets a few percent faster per level, so one purchase
+    // stretches the silence by half and re-opens the hole this rule exists to
+    // close. It is not a number that can be tuned away: the count of cells is an
+    // integer and the drill's speed is a percentage.
+    //
+    // Moving both by the same share keeps `capacity / yield` where it was, so
+    // the trip stays the same length at every level of the branch and the
+    // upgrade pays in scrap instead of in the player's attention. It also makes
+    // the hard wall of §5 — «карго не меньше самой дорогой клетки» —
+    // self-enforcing at every level rather than at level zero only.
+    //
+    // «At every level» is the exact claim, and it is not «never»: this function
+    // is handed the balance of a five-year plan, and a plan multiplies the ore
+    // too (PLAN_V1 §5). The quotient survives that only because `planBalance`
+    // scales the backpack by the very same factor — it did not, once, and the
+    // second plan met the player with a mine that could not be dug at all.
+    // Whatever bends the yield has to bend the cargo with it; this branch is one
+    // such place and the plan is the other.
+    //
+    // The yield is rounded, not floored: it has to stay a whole number so the
+    // HUD never prints «КАРГО: 70.125 / 102», and rounding keeps the ratio
+    // closest to the one balance.json chose. That the ratio stays put — that
+    // `floor(capacity / yield)` is the same at every level of the branch, in
+    // every five-year plan — is not left to arithmetic goodwill: `npm run
+    // measure` walks the levels inside several plans and checks it.
+    layers: balance.layers.map((layer) => ({
+      ...layer,
+      yield: Math.round(scaled(layer.yield, step(CARGO_ID), level(CARGO_ID))),
+    })),
   };
 }
 
@@ -310,10 +359,29 @@ export function planTier(fiveYearPlan: number): number {
  * pays `prestige.yield_mult_per_tier` more scrap per cell and sends waves
  * `prestige.wave_hp_mult_per_tier` tougher, both compounding per tier.
  *
- * Only two numbers are bent, and both of them are the ones the plan is a promise
- * about: the yield of every layer and the base health of an enemy. Hardness,
- * crystal chance, wave timing and prices stay as they are — a new plan is the
- * same mine paying better against a heavier siege, not a different game.
+ * Three numbers are bent, and each of them is one the plan is a promise about:
+ * the yield of every layer, the cargo that carries it, and the base health of an
+ * enemy. Hardness, crystal chance, wave timing and prices stay as they are — a
+ * new plan is the same mine paying better against a heavier siege, not a
+ * different game.
+ *
+ * The cargo rides with the yield for the same reason the cargo branch does
+ * (`effectiveBalance` above): a trip is `floor(capacity / yield)` cells, and the
+ * whole rhythm of §2.6 hangs off that integer. Double the ore and leave the
+ * backpack alone, and the quotient collapses instead of drifting — at the
+ * measured numbers the second plan takes the third layer from one cell a trip to
+ * *zero*, which is not a slower game but a dead one: a cell that does not fit an
+ * empty cargo can never be started, so the drill stands still for ever and the
+ * reward for reaching the bottom is an unplayable mine. Scaling both by the same
+ * factor keeps every trip exactly the length it was in the first plan and keeps
+ * the hard wall of §5 — «карго не меньше самой дорогой клетки» — standing in
+ * every plan, not only the first.
+ *
+ * Neither number is rounded here on purpose: the two are multiplied by one and
+ * the same factor, so `capacity / yield` survives as exact arithmetic whatever
+ * `yield_mult_per_tier` the owner puts in balance.json. The rounding that keeps
+ * the HUD free of «КАРГО: 70.125 / 102» happens once, in `effectiveBalance`, on
+ * top of whatever the plan handed it.
  */
 export function planBalance(balance: Balance, fiveYearPlan: number): Balance {
   const tier = planTier(fiveYearPlan);
@@ -324,6 +392,7 @@ export function planBalance(balance: Balance, fiveYearPlan: number): Balance {
   const hpMult = balance.prestige.wave_hp_mult_per_tier ** tier;
   return {
     ...balance,
+    cargo: { ...balance.cargo, capacity_base: balance.cargo.capacity_base * yieldMult },
     layers: balance.layers.map((layer) => ({ ...layer, yield: layer.yield * yieldMult })),
     waves: { ...balance.waves, enemy_hp_base: balance.waves.enemy_hp_base * hpMult },
   };
@@ -333,11 +402,17 @@ export function planBalance(balance: Balance, fiveYearPlan: number): Balance {
  * The balance everything about a profile runs on: the numbers of the plan the
  * player is in, bent by the levels bought.
  *
- * The plan goes first and the upgrades on top of it. The two touch disjoint
- * numbers — the plan bends layer yield and enemy health, the upgrades bend the
- * drill, the turret, the dome and the cargo — so the order changes no result;
- * it is fixed here so there is one answer to "what does this shift run on", and
- * so an upgrade always reads as bending the numbers of the current plan.
+ * The plan goes first and the upgrades on top of it: an upgrade bends the
+ * numbers of the plan the player is in, which is also how the base screen reads
+ * to the player.
+ *
+ * The order is fixed rather than free. The two overlap on the backpack and the
+ * ore — both scale `cargo.capacity_base` and `layers[].yield` — and scaling
+ * commutes, so every number here would come out the same either way but one:
+ * the yield is rounded to a whole scrap, and rounding does not commute with
+ * multiplication (`round(33 · 1.25) · 2 = 82`, `round(33 · 2 · 1.25) = 83`).
+ * Doing the plan first means the rounding happens once, at the end, on the
+ * number the player is actually shown.
  */
 export function shiftBalance(balance: Balance, profile: Profile): Balance {
   return effectiveBalance(planBalance(balance, profile.fiveYearPlan), profile.upgrades);
@@ -452,8 +527,28 @@ export function collectHangar(
 
 /* -------------------------------------------------------------- checkpoints */
 
-/** Every elevator checkpoint of the mine, shallowest first. Row 0 is the surface. */
+/**
+ * Every elevator checkpoint of the mine, shallowest first. Row 0 is the surface.
+ *
+ * Two ways to say it, and the second one exists for a reason. `checkpoint_rows`
+ * lists the rows outright; `checkpoint_every_rows` spaces them evenly and is the
+ * fallback when the list is absent.
+ *
+ * The list was added because evenly spaced checkpoints are what makes the arc
+ * stall. A shift adds `старт + клеток` to the depth record, and the record only
+ * moves when the shift out-digs the last one, so the player is pinned to a
+ * checkpoint until the drill grows enough to cover the whole gap to the next.
+ * How many cells a shift digs is not the same in every layer — deep cells are
+ * dug one to a trip and shallow ones two — so one spacing cannot fit all three
+ * layers, and whichever layer it fits worst becomes a plateau ten shifts long.
+ * The screen holds seven chips (`src/ui/baseScreen.ts`), and it never cared
+ * whether they were evenly spaced.
+ */
 export function checkpointRows(balance: Balance): number[] {
+  const listed = balance.shift.checkpoint_rows;
+  if (listed && listed.length > 0) {
+    return listedCheckpoints(listed, balance.shift.grid_depth);
+  }
   const every = balance.shift.checkpoint_every_rows;
   const rows: number[] = [ENTRANCE_ROW];
   if (!(every > 0)) {
@@ -463,6 +558,42 @@ export function checkpointRows(balance: Balance): number[] {
     rows.push(row);
   }
   return rows;
+}
+
+/**
+ * `shift.checkpoint_rows` as the rest of the game is allowed to assume it is:
+ * whole rows, inside the mine, the surface first, no repeats, deepest last.
+ *
+ * The list is hand-written in balance.json by the owner of the game, who is
+ * promised there («Правь смело») that the numbers are a slider and not a
+ * contract, so it is this function's job to take a typo as a typo. Everything
+ * downstream reads the result as a sorted ladder: `deepestOpenCheckpoint` takes
+ * the last element, the base screen lays the chips left to right, and the
+ * elevator drops the drill on the row it is handed. An unsorted list would put
+ * the elevator somewhere in the middle of the ladder, a duplicate would draw two
+ * identical chips, a negative row is not a row at all, and a row past
+ * `grid_depth` is a chip that starts a shift outside the grid — `createShift`
+ * throws on it, which reads to the player as a game that will not start.
+ *
+ * The even-spacing fallback above has always clipped itself to `grid_depth`; the
+ * list gets the same treatment rather than a different one.
+ *
+ * Rows are floored, not dropped, so `24.5` still means the checkpoint the owner
+ * was aiming at. The surface is always in: it is where a shift begins.
+ */
+function listedCheckpoints(listed: readonly number[], gridDepth: number): number[] {
+  const kept = new Set<number>([ENTRANCE_ROW]);
+  for (const row of listed) {
+    if (!Number.isFinite(row)) {
+      continue;
+    }
+    const whole = Math.floor(row);
+    if (whole < ENTRANCE_ROW || whole > gridDepth) {
+      continue;
+    }
+    kept.add(whole);
+  }
+  return [...kept].sort((left, right) => left - right);
 }
 
 /** A checkpoint is open once the player has dug that deep at least once. */

@@ -28,7 +28,14 @@ export interface ShiftBalance {
   readonly grid_width: number;
   readonly grid_depth: number;
   readonly elevator_bank_sec: number;
+  /** Even spacing of the elevator checkpoints. Ignored when `checkpoint_rows` is set. */
   readonly checkpoint_every_rows: number;
+  /**
+   * The elevator checkpoints outright, when they are not evenly spaced — the
+   * layers do not dig at the same speed, so their gaps should not be equal
+   * either. See `checkpointRows` in src/sim/progress.ts.
+   */
+  readonly checkpoint_rows?: readonly number[];
   readonly crystals_per_new_checkpoint: number;
   readonly quota_share_of_best: number;
   readonly quota_min: number;

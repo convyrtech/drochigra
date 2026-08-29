@@ -13,6 +13,7 @@ import {
   hasConveyor,
   isBottomReached,
   nextUpgrade,
+  planBalance,
   scrapId,
   shiftBalance,
   upgradeIds,
@@ -140,18 +141,27 @@ const NO_WAVES_SEC = 1e9;
 const SEEDS: readonly number[] = [1, 2, 3, 4, 5];
 
 /**
- * The balance as it was measured before the economy was rebuilt for issue #14 —
- * a 9×30 mine where the bottom fell on the 73rd second of the first shift. Kept
- * here so the report can put the old numbers and the new ones side by side;
- * nothing is computed from them.
+ * The balance as it was measured before the rhythm of PLAN_V1 §2.6 was fixed —
+ * a 9×108 mine that took the bottom on the 17th shift and asked the player for
+ * a decision about once every two minutes. Kept here so the report can put the
+ * old numbers and the new ones side by side; nothing is computed from them.
+ *
+ * (The line before this one held the balance from before the economy rework of
+ * issue #14 — a 9×30 mine whose bottom fell on the 73rd second of the first
+ * shift. That comparison has done its job and now lives in the git history.)
  */
-const BEFORE_REWORK = {
-  scrapPerMin: [324.6, 384.8, 419.4],
-  crystalPerMin: [0, 1.67, 1.7],
-  conveyorScrapPerMin: [391.3, 616.3, 833.5],
-  layerCells: [81, 89, 98],
-  bottomShift: 1,
-  bottomSec: 73,
+const BEFORE_RHYTHM = {
+  scrapPerMin: [68.7, 121.7, 176.1],
+  crystalPerMin: [0, 0.19, 0.26],
+  conveyorScrapPerMin: [72.5, 137.5, 293.3],
+  layerCells: [315, 323, 332],
+  /** Mean and longest gap between decisions about the mine, per layer. */
+  rhythmMeanSec: [122.2, 52.8, 34.1],
+  rhythmMaxSec: [194.7, 97.5, 52.8],
+  firstShiftDecisions: 3,
+  firstShiftMeanSec: 122.2,
+  firstShiftMaxSec: 194.7,
+  bottomShift: 17,
 } as const;
 
 /**
@@ -195,6 +205,81 @@ const BOTTOM_SHIFTS_MAX = 25;
  * of played shift. See `secondsToNextUpgrade` for what exactly is timed.
  */
 const NEXT_UPGRADE_LIMIT_SEC = 40;
+
+/**
+ * PLAN_V1 §2 rule 4 used to read «в 20–40 секундах» and only the 40 was ever
+ * checked. The floor cannot be checked here, and the reason is arithmetic, not
+ * laziness — it is written down in PLAN_V1 §12 and repeated here because this
+ * is where someone will next try to add the missing `expect`:
+ *
+ * `secondsToNextUpgrade` is measured at the base, right after the player has
+ * spent everything they could. Buying stops exactly when the wallet no longer
+ * covers the cheapest thing on offer, so what is left in it is a remainder that
+ * lands anywhere between zero and that price. The distance to the next purchase
+ * is therefore uniform-ish over `(0, cheapest / rate]` — its maximum is what the
+ * balance sets, and its median is about half of that. Demanding «максимум ≤ 40 и
+ * медиана ≥ 20» pins the two ends of the same distribution together and has
+ * exactly one solution, where every shift ends 40 seconds from its next
+ * purchase — which is not a game, it is a fixed point.
+ *
+ * So the rule keeps its ceiling and gives up its floor, and the intent behind
+ * the floor — that a purchase stays a purchase and not a formality — is guarded
+ * instead by `MIN_MEDIAN_NEXT_UPGRADE_SEC` on the median.
+ */
+const MIN_MEDIAN_NEXT_UPGRADE_SEC = 10;
+
+/**
+ * PLAN_V1 §2 rule 6: «игрок решает примерно раз в 20–30 секунд» — the target,
+ * and the band the mean gap between decisions about the mine is aimed at.
+ * See `noteDecision` for what a decision is.
+ *
+ * What is held to the band is `Rhythm.typicalSec` — the length of the gap a
+ * random second of the shift falls into (see `Rhythm`). Not the mean: the gaps
+ * are bimodal and their mean describes a moment that does not exist.
+ *
+ * The guarded band is wider than the target on the floor side only, because the
+ * same numbers have to hold across a whole arc: the drill and the elevator both
+ * shorten the trip, so the typical pause drifts down by the end of the arc — the
+ * measured worst is 11.5 seconds at «всё к концу дуги», and the floor sits at 8.
+ *
+ * The ceiling does **not** get that slack. It is the half of §2.6 the player can
+ * feel as a broken promise — «раз в 20–30 секунд» and then a minute of nothing —
+ * so it is held at the 30 the rule says out loud. It was briefly raised to 32
+ * with 35 as the gap limit, and nothing needed it: the whole sweep passes at
+ * 30/35 with the worst typical pause at 27.3 seconds and the worst single gap at
+ * 32.5 (state «лифт 20», the second layer). A guard set above what the game
+ * measures is not a guard, it is a note saying the number was inconvenient.
+ *
+ * `RHYTHM_GAP_LIMIT_SEC` is the one that matters most: it is the longest single
+ * stretch where the game asks the player for nothing. It was 252 seconds when
+ * this invariant was written, and 63 in the version that was rejected for
+ * measuring the mean.
+ */
+const RHYTHM_TARGET_MIN_SEC = 20;
+const RHYTHM_TARGET_MAX_SEC = 30;
+const RHYTHM_MIN_SEC = 8;
+const RHYTHM_MAX_SEC = 30;
+const RHYTHM_GAP_LIMIT_SEC = 35;
+
+/**
+ * How much richer each layer has to be than the one above it, per minute of
+ * play, in every scenario (PLAN_V1 §5 «глубже всегда выгоднее»).
+ *
+ * A step has to be worth the deeper waves. The balance this replaced paid 0.8%
+ * for the step from the first layer to the second while costing the player 28
+ * points of dome, and the old invariant — which only compared the deepest layer
+ * with the shallowest — never saw it.
+ */
+const LAYER_PREMIUM = 1.15;
+
+/** A gap this long or longer is «тишина»: `Rhythm.longShare` sums them up. */
+const LONG_GAP_SEC = 40;
+
+/**
+ * Share of a shift that may be spent inside gaps of `LONG_GAP_SEC` or longer.
+ * The balance this replaced spent 96% of the first shift there.
+ */
+const LONG_SHARE_LIMIT = 0.05;
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -419,9 +504,131 @@ interface MineRun {
   skipped: number;
   /** Times the shift froze and had to be nudged. See `tick`. */
   nudges: number;
+  /**
+   * Second of the run every player decision about the mine was taken on
+   * (PLAN_V1 §2.6). See `noteDecision` for what counts as one.
+   */
+  decisionsSec: number[];
   /** When the bottom row was first dug: the five-year plan closes there (§5). */
   bottomAtSec: number | null;
   done: boolean;
+}
+
+/**
+ * A decision of the player about the mine, for PLAN_V1 §2.6 («игрок решает
+ * примерно раз в 20–30 секунд»).
+ *
+ * Two taps count, and only these two:
+ *
+ *   - a tap on a cell (`aimDrill`) — where to dig now;
+ *   - a tap on the elevator (`callElevator`) — hand the cargo over now.
+ *
+ * The drill carrying on by itself is explicitly **not** a decision: that is the
+ * half-AFK the rule is about, and counting it would measure the drill's work
+ * instead of the player's attention. Nor is the salvo: it belongs to the
+ * defence, whose own rhythm is the wave interval, and §2.6 is being broken by
+ * the mine — the 70% of the screen that asks for nothing.
+ *
+ * «К ЗАБОЮ» (`src/ui/faceButton.ts`) is a camera control, not an order: it puts
+ * the view back on the drill after a hand-over and changes nothing in the mine.
+ * It is always the tap right before an `aimDrill`, so counting it would double
+ * every hand-over and leave the gaps between decisions exactly where they are.
+ */
+function noteDecision(run: MineRun): void {
+  run.decisionsSec.push(run.elapsedSec);
+}
+
+/**
+ * Seconds between one decision about the mine and the next, over a whole run.
+ *
+ * The shift starts the clock, so the wait before the very first tap counts, and
+ * so does the tail after the last one: a player who taps once and then watches
+ * the drill for three minutes has waited three minutes, whichever end of the
+ * shift the silence sits at. Zero-length gaps (two orders inside the same
+ * millisecond, which the elevator can produce) are dropped — they are the
+ * measurement's own step, not a decision the player could have felt.
+ */
+function decisionGaps(decisionsSec: readonly number[], windowSec: number): number[] {
+  const moments = [0, ...decisionsSec, windowSec];
+  const gaps: number[] = [];
+  for (let index = 1; index < moments.length; index += 1) {
+    const gap = (moments[index] ?? 0) - (moments[index - 1] ?? 0);
+    if (gap > SAMPLE_SEC) {
+      gaps.push(gap);
+    }
+  }
+  return gaps;
+}
+
+/**
+ * The rhythm of one run, and why it takes five numbers instead of one.
+ *
+ * The gaps are **bimodal by construction**, and the first version of this
+ * measurement was thrown out for reporting their mean. A hand-over is two
+ * decisions in a row — call the elevator, then send the drill back to the face —
+ * so every cycle produces one long silence (drive down, dig until the cargo
+ * fills) and one short one (drive up, hand over). A first shift measured
+ *
+ *     48.4  2.4  48.8  2.8  49.2  3.2  49.6  3.6  50.0  4.0  50.4  4.4  47.9
+ *
+ * has a mean of 28.1 seconds and not one single moment in it that is anything
+ * like 28 seconds. The player sits through fifty.
+ *
+ * `typicalSec` is the number that does not lie: the length of the gap a random
+ * second of the shift falls inside, which is `Σ g² / Σ g`. It weighs every gap
+ * by how much of the player's time it actually occupies, so a minute of silence
+ * counts as a minute and a two-second double tap counts as two seconds. On the
+ * sequence above it gives 46.4 — which is what playing it feels like. This is
+ * the number PLAN_V1 §2.6 is held to.
+ *
+ * `medianSec` is kept beside it as a cross-check (it is what the review that
+ * found the bug reported), `longShare` says how much of the shift is spent
+ * inside silences of `LONG_GAP_SEC` or more, and `gaps` is printed in order so
+ * that the shape can be seen and not just trusted.
+ */
+interface Rhythm {
+  readonly decisions: number;
+  /** Length of the gap a random second of the shift falls into: Σg²/Σg. */
+  readonly typicalSec: number;
+  readonly medianSec: number;
+  readonly meanSec: number;
+  readonly maxSec: number;
+  /** Share of the shift spent inside gaps of `LONG_GAP_SEC` or longer. */
+  readonly longShare: number;
+  readonly gaps: readonly number[];
+}
+
+function rhythmOf(decisionsSec: readonly number[], windowSec: number): Rhythm {
+  const gaps = decisionGaps(decisionsSec, windowSec);
+  if (gaps.length === 0) {
+    return {
+      decisions: decisionsSec.length,
+      typicalSec: windowSec,
+      medianSec: windowSec,
+      meanSec: windowSec,
+      maxSec: windowSec,
+      longShare: 1,
+      gaps: [windowSec],
+    };
+  }
+  const total = gaps.reduce((sum, gap) => sum + gap, 0);
+  const squared = gaps.reduce((sum, gap) => sum + gap * gap, 0);
+  const sorted = [...gaps].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const median =
+    sorted.length % 2 === 1
+      ? (sorted[middle] ?? 0)
+      : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
+  const longSec = gaps.filter((gap) => gap >= LONG_GAP_SEC).reduce((sum, gap) => sum + gap, 0);
+  return {
+    decisions: decisionsSec.length,
+    typicalSec: squared / total,
+    medianSec: median,
+    meanSec: total / gaps.length,
+    maxSec: Math.max(...gaps),
+    longShare: longSec / total,
+    gaps,
+  };
 }
 
 function advancePlan(run: MineRun): void {
@@ -444,6 +651,7 @@ function aimNext(run: MineRun): void {
       return;
     }
     if (aimDrill(run.state, cell.col, cell.row)) {
+      noteDecision(run);
       return;
     }
     run.planIndex += 1;
@@ -453,6 +661,7 @@ function aimNext(run: MineRun): void {
 
 function requestBank(run: MineRun, end: CycleEnd): void {
   if (callElevator(run.state)) {
+    noteDecision(run);
     run.pendingEnd = end;
   }
 }
@@ -538,6 +747,7 @@ function runMine(options: MineOptions): MineRun {
     redirectsWhileDigging: 0,
     skipped: 0,
     nudges: 0,
+    decisionsSec: [],
     bottomAtSec: null,
     done: false,
   };
@@ -630,6 +840,8 @@ interface MineResult {
   readonly skipped: number;
   /** Freezes of src/sim/shift.ts this run had to nudge past. See `tick`. */
   readonly nudges: number;
+  /** PLAN_V1 §2.6: how often the player is asked for anything. */
+  readonly rhythm: Rhythm;
 }
 
 /** Seconds one hand-over costs in the scenario a result came from. */
@@ -639,6 +851,137 @@ function bankSecOf(result: MineResult): number {
 
 function scrapPerMin(scrap: number, sec: number): number {
   return sec > 0 ? (scrap / sec) * 60 : 0;
+}
+
+/**
+ * Every upgrade state the rhythm of §2.6 has to survive — and the reason this
+ * list exists at all.
+ *
+ * The version of this measurement that was rejected guarded «с прокачкой и без»,
+ * where «прокачка» meant one thing: whatever the greedy shopper of the
+ * progression run happened to own after three shifts. That shopper did not buy
+ * cargo until the sixth shift, so nobody ever measured a player with one cargo
+ * level — and one cargo level was exactly what took `floor(capacity / yield)`
+ * from two cells to three and put a 38-second silence back into the first layer.
+ * An invariant that cannot see the most obvious purchase in the game is not an
+ * invariant.
+ *
+ * So the states are enumerated by hand instead: every branch that touches the
+ * loop, alone, low and high, and a few combinations. `cargo: 1` is in here by
+ * name, and it is the one that used to break.
+ */
+interface UpgradeState {
+  readonly name: string;
+  readonly upgrades: UpgradeLevels;
+  /** Five-year plan the state is measured in. Absent means the first one. */
+  readonly plan?: number;
+}
+
+const RHYTHM_STATES: readonly UpgradeState[] = [
+  { name: 'ничего', upgrades: {} },
+  { name: 'карго 1', upgrades: { cargo: 1 } },
+  { name: 'карго 4', upgrades: { cargo: 4 } },
+  { name: 'карго 12', upgrades: { cargo: 12 } },
+  { name: 'карго 24', upgrades: { cargo: 24 } },
+  { name: 'бур 6', upgrades: { drill: 6 } },
+  { name: 'бур 20', upgrades: { drill: 20 } },
+  { name: 'бур 45', upgrades: { drill: 45 } },
+  { name: 'лифт 6', upgrades: { elevator: 6 } },
+  // The elevator is the branch that cuts the road, so it shortens the trip
+  // without touching the digging — it pushes the typical pause *down* and the
+  // road-heavy deep layer least of all. Twenty levels is past anything the arc
+  // buys (six), and it is here because the sweep decides the band: a state the
+  // sweep cannot see cannot be argued about.
+  { name: 'лифт 20', upgrades: { elevator: 20 } },
+  { name: 'карго 1 + бур 3', upgrades: { cargo: 1, drill: 3 } },
+  { name: 'карго 1 + бур 6', upgrades: { cargo: 1, drill: 6 } },
+  { name: 'карго 6 + бур 6', upgrades: { cargo: 6, drill: 6 } },
+  // What the progression run actually owns when it reaches the bottom — the end
+  // of the arc, copied from the «всё куплено» line of table 5 rather than
+  // guessed. If that line moves, this one moves with it.
+  { name: 'всё к концу дуги', upgrades: { cargo: 27, drill: 60, elevator: 6 } },
+];
+
+/**
+ * Five-year plans the measurement runs, and why there is more than one.
+ *
+ * Reaching the bottom is the win, and the win hands the player the next plan
+ * (`startNextPlan`): richer ore against heavier waves. That makes every plan a
+ * reachable state of the game — the second one with certainty, since it is the
+ * reward for finishing the first — and everything §2.6 and §5 promise has to
+ * hold there too.
+ *
+ * Nothing here used to look past the first plan, and a plan that multiplied the
+ * ore while leaving the backpack alone got all the way through review: from the
+ * second plan on, `floor(capacity / yield)` fell to zero in the deepest layer
+ * and the mine could not be dug at all. An invariant that counts from `BALANCE`
+ * instead of from `planBalance(BALANCE, plan)` is blind to the whole second half
+ * of the game.
+ *
+ * Plans 1, 2, 3 and 5: the first, the one the win hands out, the one after it,
+ * and a far one where the multiplier has compounded four times.
+ */
+const MEASURED_PLANS: readonly number[] = [1, 2, 3, 5];
+
+/** Upgrade states every plan is measured under: bare, mid-arc, end of arc. */
+const PLAN_STATES: readonly UpgradeState[] = [
+  { name: 'без прокачки', upgrades: {} },
+  { name: 'карго 12', upgrades: { cargo: 12 } },
+  { name: 'конец дуги', upgrades: { cargo: 27, drill: 60, elevator: 6 } },
+];
+
+interface RhythmProbe {
+  readonly state: string;
+  readonly plan: number;
+  readonly layerIndex: number;
+  /** Cells that went from rock to dug. Zero means the mine is unplayable. */
+  readonly cells: number;
+  /** Scrap actually handed over. Zero means the same. */
+  readonly banked: number;
+  readonly cellsPerTrip: number;
+  readonly scrapPerMin: number;
+  readonly rhythm: Rhythm;
+}
+
+/**
+ * One layer under one upgrade state, on one seed. Lighter than `measureLayer`:
+ * the crystal average needs five seeds, the rhythm and the rate do not.
+ */
+function probeRhythm(layerIndex: number, state: UpgradeState): RhythmProbe {
+  const plan = state.plan ?? 1;
+  // The same order the game itself uses (`shiftBalance`): the plan first, the
+  // levels bought on top of it.
+  const balance = effectiveBalance(planBalance(quietWaves(BALANCE), plan), state.upgrades);
+  const { top } = layerRows(balance, layerIndex);
+  const run = runMine({
+    balance,
+    seed: SEEDS[0] ?? 1,
+    layerIndex,
+    startRow: top,
+    conveyor: false,
+    salvo: false,
+  });
+  const dug = digSecondsSince(run.state, run.startMask);
+  // The rate of the steady cycle, not of the whole window: a window holds a
+  // whole number of trips plus a stump, and one trip more or less swings the
+  // window rate by a twelfth. Comparing layers on that noise would make the
+  // depth premium look like it moves when nothing moved.
+  const steady = run.cycles.slice(1).filter((cycle) => cycle.end === 'cargo');
+  const steadySec = steady.reduce((sum, cycle) => sum + (cycle.endSec - cycle.startSec), 0);
+  const steadyScrap = steady.reduce((sum, cycle) => sum + cycle.scrap, 0);
+  return {
+    state: state.name,
+    plan,
+    layerIndex,
+    cells: dug.cells,
+    banked: run.state.banked,
+    cellsPerTrip: run.banks > 0 ? dug.cells / run.banks : dug.cells,
+    scrapPerMin:
+      steady.length >= 2
+        ? scrapPerMin(steadyScrap, steadySec)
+        : scrapPerMin(run.state.banked, run.elapsedSec),
+    rhythm: rhythmOf(run.decisionsSec, run.elapsedSec),
+  };
 }
 
 function measureLayer(layerIndex: number, upgrades: UpgradeLevels, conveyor: boolean): MineResult {
@@ -699,6 +1042,7 @@ function measureLayer(layerIndex: number, upgrades: UpgradeLevels, conveyor: boo
     redirectsWhileDigging: first.redirectsWhileDigging,
     skipped: first.skipped,
     nudges: runs.reduce((sum, run) => sum + run.nudges, 0),
+    rhythm: rhythmOf(first.decisionsSec, first.elapsedSec),
   };
 }
 
@@ -862,6 +1206,8 @@ interface ProgressionShift {
   /** Everything owned once that money is spent. */
   readonly levels: string;
   readonly nudges: number;
+  /** PLAN_V1 §2.6: decisions about the mine this shift asked for. */
+  readonly rhythm: Rhythm;
 }
 
 interface Progression {
@@ -983,6 +1329,7 @@ function runProgression(): Progression {
       nextSec: next.sec,
       levels: levelsText(profile),
       nudges: run.nudges,
+      rhythm: rhythmOf(run.decisionsSec, run.elapsedSec),
     });
     if (index <= TYPICAL_AFTER_SHIFTS) {
       typical = profile.upgrades;
@@ -1048,6 +1395,8 @@ let defenseBare: DefenseResult;
 let defenseSalvo: DefenseResult;
 let progression: Progression;
 let typical: UpgradeLevels;
+let probes: RhythmProbe[] = [];
+let planProbes: RhythmProbe[] = [];
 let report = '';
 
 function buildReport(): string {
@@ -1280,6 +1629,181 @@ function buildReport(): string {
   );
 
   lines.push('');
+  lines.push('── 6. РИТМ РЕШЕНИЙ ИГРОКА (PLAN_V1 §2.6) ────────────────────────────────────────');
+  lines.push('');
+  lines.push('Решение = тап по клетке (перенацелить бур) или тап по лифту (сдать карго).');
+  lines.push('Автопродолжение бура и залп решениями не считаются: §2.6 — про то, как часто');
+  lines.push('игра просит игрока, а не про то, как часто она работает сама.');
+  lines.push('');
+  lines.push('Паузы бимодальны: сдача — это два тапа подряд, между сдачами одна долгая копка.');
+  lines.push('Поэтому «типичная» — не среднее, а длина паузы, в которую попадает случайная секунда');
+  lines.push('смены (Σg²/Σg): именно её игрок и просиживает. Среднее оставлено рядом как справка.');
+  lines.push('');
+  lines.push(
+    table(
+      [
+        'сценарий',
+        'слой',
+        'решений',
+        'типичная, с',
+        'медиана, с',
+        'среднее, с',
+        'максимум, с',
+        `доля смены в тишине ≥${LONG_GAP_SEC} с`,
+      ],
+      income.map((result) => [
+        scenarioName(result.upgraded, result.conveyor),
+        layerName(result.layerIndex),
+        String(result.rhythm.decisions),
+        num(result.rhythm.typicalSec),
+        num(result.rhythm.medianSec),
+        num(result.rhythm.meanSec),
+        num(result.rhythm.maxSec),
+        `${num(result.rhythm.longShare * 100, 0)}%`,
+      ]),
+    ),
+  );
+  lines.push('');
+  lines.push(
+    table(
+      [
+        'смена',
+        'старт, ряд',
+        'решений',
+        'типичная, с',
+        'медиана, с',
+        'максимум, с',
+        `тишина ≥${LONG_GAP_SEC} с`,
+      ],
+      progression.shifts.map((shift) => [
+        String(shift.index),
+        String(shift.startRow),
+        String(shift.rhythm.decisions),
+        num(shift.rhythm.typicalSec),
+        num(shift.rhythm.medianSec),
+        num(shift.rhythm.maxSec),
+        `${num(shift.rhythm.longShare * 100, 0)}%`,
+      ]),
+    ),
+  );
+  lines.push('');
+  const firstShift = progression.shifts[0];
+  if (firstShift) {
+    lines.push('ПЕРВАЯ СМЕНА, все паузы по порядку (с):');
+    lines.push(`  ${firstShift.rhythm.gaps.map((gap) => num(gap)).join('  ')}`);
+    lines.push(
+      `  ${firstShift.rhythm.decisions} решени(й) · типичная ${num(firstShift.rhythm.typicalSec)} с · ` +
+        `медиана ${num(firstShift.rhythm.medianSec)} с · среднее ${num(firstShift.rhythm.meanSec)} с · ` +
+        `максимум ${num(firstShift.rhythm.maxSec)} с · ` +
+        `в тишине ≥${LONG_GAP_SEC} с — ${num(firstShift.rhythm.longShare * 100, 0)}% смены.`,
+    );
+    lines.push(
+      `  Цель §2.6 — ${RHYTHM_TARGET_MIN_SEC}–${RHYTHM_TARGET_MAX_SEC} с; инвариант держит типичную ` +
+        `в ${RHYTHM_MIN_SEC}–${RHYTHM_MAX_SEC} с, ни одной паузы длиннее ${RHYTHM_GAP_LIMIT_SEC} с ` +
+        `и не больше ${num(LONG_SHARE_LIMIT * 100, 0)}% смены в тишине.`,
+    );
+  }
+  const arcTypical = progression.shifts.map((shift) => shift.rhythm.typicalSec);
+  lines.push(
+    `Вся дуга: типичная пауза ${num(Math.min(...arcTypical))}–${num(Math.max(...arcTypical))} с, ` +
+      `самая долгая пауза за дугу ${num(Math.max(...progression.shifts.map((s) => s.rhythm.maxSec)))} с.`,
+  );
+  const beltRhythm = income.filter((result) => result.conveyor);
+  lines.push(
+    `С конвейером решений почти нет (${beltRhythm.map((result) => result.rhythm.decisions).join('/')} ` +
+      'за смену по слоям) — он и покупается за то, что убирает ходки (§4). Это осознанная плата ' +
+      'за самый дорогой апгрейд игры, а не дыра в §2.6, поэтому инвариант его не сторожит.',
+  );
+
+  lines.push('');
+  lines.push('── 7. РИТМ И ПРЕМИЯ ПОД КАЖДОЙ ВЕТКОЙ ПРОКАЧКИ ──────────────────────────────────');
+  lines.push('');
+  lines.push('Не «путь жадного бота», а перебор состояний руками: каждая ветка, которая трогает');
+  lines.push('петлю, поодиночке и в связках. Строка «карго 1» — та самая покупка, на которой');
+  lines.push('прошлый заход и сломался: одна она делала тишину 38-секундной.');
+  lines.push('');
+  lines.push(
+    table(
+      ['состояние', 'слой', 'кл/ходку', 'лом/мин', 'типичная, с', 'максимум, с', `тишина ≥${LONG_GAP_SEC} с`, 'премия к слою выше'],
+      probes.map((probe, index) => {
+        const previous = probe.layerIndex > 0 ? probes[index - 1] : undefined;
+        return [
+          probe.layerIndex === 0 ? probe.state : '',
+          layerName(probe.layerIndex),
+          num(probe.cellsPerTrip, 2),
+          num(probe.scrapPerMin, 0),
+          num(probe.rhythm.typicalSec),
+          num(probe.rhythm.maxSec),
+          `${num(probe.rhythm.longShare * 100, 0)}%`,
+          previous ? num(probe.scrapPerMin / previous.scrapPerMin, 3) : '—',
+        ];
+      }),
+    ),
+  );
+  lines.push('');
+  lines.push(
+    `Худшее по перебору: типичная ${num(Math.min(...probes.map((p) => p.rhythm.typicalSec)))}–` +
+      `${num(Math.max(...probes.map((p) => p.rhythm.typicalSec)))} с, ` +
+      `самая долгая пауза ${num(Math.max(...probes.map((p) => p.rhythm.maxSec)))} с, ` +
+      `тишина ${num(Math.max(...probes.map((p) => p.rhythm.longShare)) * 100, 0)}%.`,
+  );
+
+  lines.push('');
+  lines.push('── 8. ПЯТИЛЕТКИ: ТА ЖЕ ИГРА ПОСЛЕ ПОБЕДЫ (PLAN_V1 §5) ───────────────────────────');
+  lines.push('');
+  lines.push('Дно = победа, победа = следующая пятилетка: руда богаче, волны крепче. Значит');
+  lines.push('вторая пятилетка — не экзотика, а стопроцентно достижимое состояние, и §2.6 и §5');
+  lines.push('обязаны держаться в ней так же, как в первой. Считается всё от planBalance, а не');
+  lines.push('от balance.json: пятилетка, которая множила руду и не трогала карго, прошла три');
+  lines.push('круга приёмки — во втором плане в ходку влезало НОЛЬ клеток третьего слоя и шахта');
+  lines.push('не копалась вовсе, а ни один инвариант туда не смотрел.');
+  lines.push('');
+  lines.push(
+    table(
+      ['пятилетка', 'состояние', 'слой', 'карго', 'лом/клетку', 'кл/ходку', 'клеток за смену', 'лом/мин', 'типичная, с', 'максимум, с', 'премия к слою выше'],
+      planProbes.map((probe, index) => {
+        const state = PLAN_STATES.find((candidate) => candidate.name === probe.state);
+        const bent = effectiveBalance(
+          planBalance(BALANCE, probe.plan),
+          state?.upgrades ?? {},
+        );
+        const previous = probe.layerIndex > 0 ? planProbes[index - 1] : undefined;
+        return [
+          probe.layerIndex === 0 ? String(probe.plan) : '',
+          probe.layerIndex === 0 ? probe.state : '',
+          layerName(probe.layerIndex),
+          num(bent.cargo.capacity_base, 0),
+          num(layerAt(bent, probe.layerIndex).yield, 0),
+          num(probe.cellsPerTrip, 2),
+          num(probe.cells, 0),
+          num(probe.scrapPerMin, 0),
+          num(probe.rhythm.typicalSec),
+          num(probe.rhythm.maxSec),
+          previous ? num(probe.scrapPerMin / previous.scrapPerMin, 3) : '—',
+        ];
+      }),
+    ),
+  );
+  lines.push('');
+  {
+    const dead = planProbes.filter((probe) => probe.cells === 0 || probe.banked === 0);
+    lines.push(
+      dead.length === 0
+        ? `Шахта копается во всех ${MEASURED_PLANS.length} пятилетках (${MEASURED_PLANS.join(', ')}) и во всех трёх слоях: ` +
+            `клеток за смену ${num(Math.min(...planProbes.map((p) => p.cells)), 0)}–` +
+            `${num(Math.max(...planProbes.map((p) => p.cells)), 0)}, ` +
+            'ходка везде той же длины, что в первой пятилетке.'
+        : `ШАХТА НЕ КОПАЕТСЯ: ${dead.map((p) => `${p.state}, пятилетка ${p.plan}, ${layerName(p.layerIndex)}`).join('; ')}`,
+    );
+    lines.push(
+      `Худшее по пятилеткам: типичная ${num(Math.min(...planProbes.map((p) => p.rhythm.typicalSec)))}–` +
+        `${num(Math.max(...planProbes.map((p) => p.rhythm.typicalSec)))} с, ` +
+        `самая долгая пауза ${num(Math.max(...planProbes.map((p) => p.rhythm.maxSec)))} с, ` +
+        `тишина ${num(Math.max(...planProbes.map((p) => p.rhythm.longShare)) * 100, 0)}%.`,
+    );
+  }
+
+  lines.push('');
   lines.push('── ВЫВОД ────────────────────────────────────────────────────────────────────────');
   lines.push('');
   for (const conveyor of [false, true]) {
@@ -1312,23 +1836,37 @@ function buildReport(): string {
   }
 
   lines.push('');
-  lines.push('── БЫЛО ДО ПЕРЕКРОЙКИ ЭКОНОМИКИ (issue #14) ─────────────────────────────────────');
+  lines.push('── БЫЛО ДО ПРАВКИ РИТМА §2.6 ────────────────────────────────────────────────────');
   lines.push('');
   lines.push(
     table(
-      ['слой', 'было клеток', 'стало клеток', 'было лом/мин', 'стало лом/мин', 'было крист/мин', 'стало крист/мин', 'было с конвейером', 'стало с конвейером'],
+      [
+        'слой',
+        'было: среднее / макс, с',
+        'стало: типичная / макс, с',
+        'было клеток',
+        'стало клеток',
+        'было лом/мин',
+        'стало лом/мин',
+        'было крист/мин',
+        'стало крист/мин',
+        'было с конвейером',
+        'стало с конвейером',
+      ],
       layers.map(({ index }) => {
         const plain = pickResult(index, false, false);
         const belt = pickResult(index, false, true);
         return [
           layerName(index),
-          String(BEFORE_REWORK.layerCells[index] ?? 0),
+          `${num(BEFORE_RHYTHM.rhythmMeanSec[index] ?? 0)} / ${num(BEFORE_RHYTHM.rhythmMaxSec[index] ?? 0)}`,
+          `${num(plain.rhythm.typicalSec)} / ${num(plain.rhythm.maxSec)}`,
+          String(BEFORE_RHYTHM.layerCells[index] ?? 0),
           String(plain.layerCells),
-          num(BEFORE_REWORK.scrapPerMin[index] ?? 0),
+          num(BEFORE_RHYTHM.scrapPerMin[index] ?? 0),
           num(scrapPerMin(plain.scrap, plain.windowSec)),
-          num(BEFORE_REWORK.crystalPerMin[index] ?? 0, 2),
+          num(BEFORE_RHYTHM.crystalPerMin[index] ?? 0, 2),
           num((plain.crystals / plain.windowSec) * 60, 2),
-          num(BEFORE_REWORK.conveyorScrapPerMin[index] ?? 0),
+          num(BEFORE_RHYTHM.conveyorScrapPerMin[index] ?? 0),
           num(scrapPerMin(belt.scrap, belt.windowSec)),
         ];
       }),
@@ -1336,15 +1874,30 @@ function buildReport(): string {
   );
   lines.push('');
   lines.push(
-    `Дно: было на смене ${BEFORE_REWORK.bottomShift}, на ${BEFORE_REWORK.bottomSec}-й секунде; ` +
-      `стало ${progression.bottomShift === null ? 'недостижимо' : `на смене ${progression.bottomShift}`}. ` +
-      'Лом в минуту стал меньше, потому что клетка стоит дороже по времени, а не потому что слой обеднел:',
+    'Колонка «было» — среднее: типичной паузы тогда никто не считал, и в этом была вся ошибка.',
   );
-  lines.push('в слое лежит вчетверо больше клеток, и ни один из них теперь не кончается за смену.');
+  lines.push(
+    `Первая смена: было ${BEFORE_RHYTHM.firstShiftDecisions} решени(й) за смену ` +
+      `(среднее ${num(BEFORE_RHYTHM.firstShiftMeanSec)} с, самая долгая пауза ${num(BEFORE_RHYTHM.firstShiftMaxSec)} с), ` +
+      `стало ${firstShift?.rhythm.decisions ?? 0} ` +
+      `(типичная ${num(firstShift?.rhythm.typicalSec ?? 0)} с, самая долгая ${num(firstShift?.rhythm.maxSec ?? 0)} с, ` +
+      `в тишине ≥${LONG_GAP_SEC} с — ${num((firstShift?.rhythm.longShare ?? 0) * 100, 0)}% смены).`,
+  );
+  lines.push(
+    `Дно: было на смене ${BEFORE_RHYTHM.bottomShift}, ` +
+      `стало ${progression.bottomShift === null ? 'недостижимо' : `на смене ${progression.bottomShift}`}. ` +
+      'Ходка теперь набирает карго за 2 клетки первого слоя вместо шестнадцати, и это число не',
+  );
+  lines.push(
+    'двигает ни один апгрейд: ветка «Карго» поднимает ёмкость и добычу вместе (см. таблицу 7).',
+  );
 
   lines.push('');
-  lines.push('§12 требует только L3 ≥ L1. Строки, где «L3 ПЛАТИТ МЕНЬШЕ L2», формально проверку');
-  lines.push('проходят, но ломают обещание §5 «глубже всегда выгоднее» — решение за владельцем.');
+  lines.push(
+    `§5 требует премию не меньше ${num((LAYER_PREMIUM - 1) * 100, 0)}% на КАЖДОЙ соседней паре во всех ` +
+      'четырёх сценариях. Раньше сторожилось только «L3 не хуже L1», и середина шахты жила без присмотра:',
+  );
+  lines.push('шаг с первого слоя на второй платил 0,8% и стоил игроку 28 очков купола.');
   const nudges =
     income.reduce((sum, result) => sum + result.nudges, 0) +
     shiftsWithWaves.reduce((sum, result) => sum + result.nudges, 0) +
@@ -1382,6 +1935,22 @@ beforeAll(() => {
     }
   }
 
+  probes = [];
+  for (const state of RHYTHM_STATES) {
+    for (let index = 0; index < BALANCE.layers.length; index += 1) {
+      probes.push(probeRhythm(index, state));
+    }
+  }
+
+  planProbes = [];
+  for (const state of PLAN_STATES) {
+    for (const plan of MEASURED_PLANS) {
+      for (let index = 0; index < BALANCE.layers.length; index += 1) {
+        planProbes.push(probeRhythm(index, { ...state, plan }));
+      }
+    }
+  }
+
   defenseBare = measureDefense(false);
   defenseSalvo = measureDefense(true);
 
@@ -1401,9 +1970,21 @@ function pickResult(layerIndex: number, upgraded: boolean, conveyor: boolean): M
   return found;
 }
 
-function rate(layerIndex: number, upgraded: boolean, conveyor: boolean): number {
+/**
+ * The same layer, measured over its steady bank-to-bank cycles instead of the
+ * whole window. This is what the depth premium is guarded on.
+ *
+ * A window holds a whole number of trips plus a stump, so the window rate moves
+ * by a twelfth when one more trip fits — noise that has nothing to do with the
+ * layer being richer or poorer. The report keeps printing the window rate,
+ * because that is the honest «лом за смену»; the invariant compares cycles,
+ * because that is the honest «лом за ходку».
+ */
+function steadyRate(layerIndex: number, upgraded: boolean, conveyor: boolean): number {
   const result = pickResult(layerIndex, upgraded, conveyor);
-  return scrapPerMin(result.scrap, result.windowSec);
+  return result.steadyCycles >= 2
+    ? scrapPerMin(result.steadyScrap, result.steadySec)
+    : scrapPerMin(result.scrap, result.windowSec);
 }
 
 /** Index of the deepest layer, so a fourth ore later does not need a new test. */
@@ -1433,13 +2014,22 @@ describe('замер баланса', () => {
     }
   });
 
-  it('карго вмещает клетку самого дорогого слоя, иначе бур встанет навсегда', () => {
+  it('карго вмещает клетку самого дорогого слоя в каждой пятилетке, иначе бур встанет навсегда', () => {
     // A cell whose scrap does not fit an empty cargo can never be started: the
     // drill blocks, hands over an empty backpack, comes back and blocks again.
     // The mine simply stops paying, with nothing on screen to explain why — so
     // this is the one balance number that is a hard wall rather than a slider.
-    const richest = Math.max(...BALANCE.layers.map((layer) => layer.yield));
-    expect(BALANCE.cargo.capacity_base).toBeGreaterThanOrEqual(richest);
+    //
+    // Counted from `planBalance`, not from balance.json. The wall was checked at
+    // level zero of the first plan only, and a five-year plan that doubled the
+    // ore while leaving the backpack at 96 walked straight through it: from the
+    // second plan on the richest cell was 192 and the cargo 96, so the reward
+    // for winning was a mine nobody could dig.
+    for (const plan of MEASURED_PLANS) {
+      const bent = planBalance(BALANCE, plan);
+      const richest = Math.max(...bent.layers.map((layer) => layer.yield));
+      expect(bent.cargo.capacity_base, `пятилетка ${plan}`).toBeGreaterThanOrEqual(richest);
+    }
   });
 
   it('стартовый ряд каждого слоя — открытый чекпоинт лифта', () => {
@@ -1449,18 +2039,38 @@ describe('замер баланса', () => {
     }
   });
 
-  it('глубина окупается: самый глубокий слой не хуже первого (PLAN_V1 §12)', () => {
+  it('глубина окупается: каждый следующий слой заметно богаче предыдущего (PLAN_V1 §5)', () => {
+    // «L3 ≥ L1» is what this used to check, and it let the middle of the mine
+    // out of sight: a balance where the second layer paid 0.8% more than the
+    // first passed it, while §5 promises the player a reason to risk the deeper
+    // waves. Every neighbouring pair is checked now, in all four scenarios, and
+    // the step has to be big enough to notice rather than merely positive.
     for (const conveyor of [false, true]) {
       for (const upgraded of [false, true]) {
-        expect(rate(DEEPEST, upgraded, conveyor)).toBeGreaterThanOrEqual(rate(0, upgraded, conveyor));
+        for (let index = 1; index <= DEEPEST; index += 1) {
+          const deeper = steadyRate(index, upgraded, conveyor);
+          const shallower = steadyRate(index - 1, upgraded, conveyor);
+          expect(
+            deeper / shallower,
+            `${scenarioName(upgraded, conveyor)}: ${layerName(index - 1)} ${num(shallower)} → ${layerName(index)} ${num(deeper)}`,
+          ).toBeGreaterThanOrEqual(LAYER_PREMIUM);
+        }
       }
     }
   });
 
-  it('с конвейером глубина честно растёт слой за слоем', () => {
-    for (const upgraded of [false, true]) {
+  it('премия за глубину видна и в кристаллах (PLAN_V1 §7)', () => {
+    // Scrap is guarded above; crystals are the other half of «глубже выгоднее»,
+    // and they are what pays for the elevator and the conveyor.
+    for (const conveyor of [false, true]) {
+      const rates = BALANCE.layers.map((_, index) => {
+        const found = pickResult(index, false, conveyor);
+        return (found.crystals / found.windowSec) * 60;
+      });
       for (let index = 1; index <= DEEPEST; index += 1) {
-        expect(rate(index, upgraded, true)).toBeGreaterThan(rate(index - 1, upgraded, true));
+        expect(rates[index] ?? 0, `конвейер ${conveyor}: L${index} → L${index + 1}`).toBeGreaterThan(
+          rates[index - 1] ?? 0,
+        );
       }
     }
   });
@@ -1514,6 +2124,166 @@ describe('замер баланса', () => {
         NEXT_UPGRADE_LIMIT_SEC,
       );
     }
+    // The intent the abandoned floor of the rule carried: a purchase that is
+    // always already paid for is not a purchase. The median is the honest place
+    // to hold that — see `MIN_MEDIAN_NEXT_UPGRADE_SEC` for why the floor cannot
+    // sit on the maximum.
+    const waits = [...progression.shifts.map((shift) => shift.nextSec)].sort((a, b) => a - b);
+    const median = waits[Math.floor(waits.length / 2)] ?? 0;
+    expect(median).toBeGreaterThanOrEqual(MIN_MEDIAN_NEXT_UPGRADE_SEC);
+  });
+
+  it('игрок решает раз в 20–30 секунд: каждый слой, с прокачкой и без (PLAN_V1 §2.6)', () => {
+    // The rule the mine was breaking: one tap at t=0 and nothing asked of the
+    // player for the next three minutes.
+    //
+    // Both upgrade states are guarded. An earlier version let the upgraded rows
+    // through as «a cross-section nobody plays» while the report printed a 63
+    // second silence in one of them — that row is the careful player who buys
+    // upgrades and does not go deeper because §6 made depth a risk, and there is
+    // nothing synthetic about them.
+    //
+    // The conveyor rows are the one exception, and it is a design decision, not
+    // a dodge: the conveyor removes the hand-over, so it removes the rhythm, and
+    // §4 sells it for exactly that.
+    for (const result of income) {
+      if (result.conveyor) {
+        continue;
+      }
+      const where = `${scenarioName(result.upgraded, result.conveyor)}, ${layerName(result.layerIndex)}`;
+      expect(result.rhythm.typicalSec, where).toBeGreaterThanOrEqual(RHYTHM_MIN_SEC);
+      expect(result.rhythm.typicalSec, where).toBeLessThanOrEqual(RHYTHM_MAX_SEC);
+      expect(result.rhythm.maxSec, where).toBeLessThanOrEqual(RHYTHM_GAP_LIMIT_SEC);
+      expect(result.rhythm.longShare, where).toBeLessThanOrEqual(LONG_SHARE_LIMIT);
+    }
+  });
+
+  it('игрок решает раз в 20–30 секунд: под любой веткой прокачки (PLAN_V1 §2.6)', () => {
+    // The invariant the rejected version did not have. See `RHYTHM_STATES`: one
+    // cargo level used to take the silence of the first layer from 26 seconds to
+    // 38, and nothing in the measurement looked there.
+    for (const probe of probes) {
+      const where = `${probe.state}, ${layerName(probe.layerIndex)}`;
+      expect(probe.rhythm.typicalSec, where).toBeGreaterThanOrEqual(RHYTHM_MIN_SEC);
+      expect(probe.rhythm.typicalSec, where).toBeLessThanOrEqual(RHYTHM_MAX_SEC);
+      expect(probe.rhythm.maxSec, where).toBeLessThanOrEqual(RHYTHM_GAP_LIMIT_SEC);
+      expect(probe.rhythm.longShare, where).toBeLessThanOrEqual(LONG_SHARE_LIMIT);
+    }
+  });
+
+  it('премия за глубину держится под любой веткой прокачки (PLAN_V1 §5)', () => {
+    for (let index = 0; index < probes.length; index += 1) {
+      const probe = probes[index];
+      const previous = probes[index - 1];
+      if (!probe || !previous || probe.layerIndex === 0) {
+        continue;
+      }
+      expect(
+        probe.scrapPerMin / previous.scrapPerMin,
+        `${probe.state}: ${layerName(probe.layerIndex - 1)} → ${layerName(probe.layerIndex)}`,
+      ).toBeGreaterThanOrEqual(LAYER_PREMIUM);
+    }
+  });
+
+  it('ветка карго не двигает число клеток в ходке — иначе она двигает тишину §2.6', () => {
+    // The structural guarantee behind the whole rhythm. A trip is
+    // `floor(capacity / yield)` cells and two decisions; if a purchase changes
+    // that count, it changes the silence by a whole cell — half a minute in the
+    // first layer — and no price can soften an integer. So the branch moves the
+    // backpack and the ore by the same share, and this walks every level of it
+    // to prove the ratio never moves.
+    //
+    // The hard wall of §5 rides along: cargo cannot fall under the richest cell
+    // at any level either, because both sides scale together.
+    // Every level, in every five-year plan: the plan multiplies the ore too, so
+    // walking the levels of the first plan alone proves nothing about the game
+    // the player is handed for winning.
+    const cellsAtZero = BALANCE.layers.map((layer) =>
+      Math.floor(BALANCE.cargo.capacity_base / layer.yield),
+    );
+    for (const plan of MEASURED_PLANS) {
+      for (let level = 0; level <= 60; level += 1) {
+        const balance = effectiveBalance(planBalance(BALANCE, plan), { cargo: level });
+        const where = `пятилетка ${plan}, карго ${level}`;
+        const richest = Math.max(...balance.layers.map((layer) => layer.yield));
+        expect(balance.cargo.capacity_base, where).toBeGreaterThanOrEqual(richest);
+        balance.layers.forEach((layer, index) => {
+          expect(Math.floor(balance.cargo.capacity_base / layer.yield), `${where}, ${layer.id}`).toBe(
+            cellsAtZero[index],
+          );
+        });
+      }
+    }
+  });
+
+  it('шахта копается в каждой пятилетке: победа не выключает игру (PLAN_V1 §5)', () => {
+    // The proof the arithmetic above cannot give: the real simulation, in every
+    // measured plan, in every layer, under three upgrade states. A plan that
+    // bends the ore without the backpack passes any check that multiplies two
+    // numbers and dies here — the drill never opens a single cell and hands over
+    // an empty backpack for six minutes.
+    for (const probe of planProbes) {
+      const where = `${probe.state}, пятилетка ${probe.plan}, ${layerName(probe.layerIndex)}`;
+      expect(probe.cells, where).toBeGreaterThan(0);
+      expect(probe.banked, where).toBeGreaterThan(0);
+    }
+  });
+
+  it('пятилетка не трогает ни ходку, ни ритм §2.6', () => {
+    // A plan is «the same mine paying better against a heavier siege» (§5), and
+    // that is a measurable claim: hardness, drill speed and the cells-per-trip
+    // quotient are all untouched, so every pause of the shift has to come out
+    // exactly as it does in the first plan. Anything else means the plan has
+    // quietly become a different game.
+    for (const probe of planProbes) {
+      const base = planProbes.find(
+        (candidate) =>
+          candidate.plan === 1 &&
+          candidate.state === probe.state &&
+          candidate.layerIndex === probe.layerIndex,
+      );
+      const where = `${probe.state}, пятилетка ${probe.plan}, ${layerName(probe.layerIndex)}`;
+      expect(base, where).toBeDefined();
+      expect(probe.cellsPerTrip, where).toBeCloseTo(base?.cellsPerTrip ?? 0, 6);
+      expect(probe.cells, where).toBe(base?.cells ?? 0);
+      expect(probe.rhythm.typicalSec, where).toBeCloseTo(base?.rhythm.typicalSec ?? 0, 6);
+      expect(probe.rhythm.maxSec, where).toBeCloseTo(base?.rhythm.maxSec ?? 0, 6);
+      // And the band itself, so this test fails on its own rather than only
+      // through the first plan's row.
+      expect(probe.rhythm.typicalSec, where).toBeGreaterThanOrEqual(RHYTHM_MIN_SEC);
+      expect(probe.rhythm.typicalSec, where).toBeLessThanOrEqual(RHYTHM_MAX_SEC);
+      expect(probe.rhythm.maxSec, where).toBeLessThanOrEqual(RHYTHM_GAP_LIMIT_SEC);
+      expect(probe.rhythm.longShare, where).toBeLessThanOrEqual(LONG_SHARE_LIMIT);
+    }
+  });
+
+  it('премия за глубину держится в каждой пятилетке (PLAN_V1 §5)', () => {
+    for (let index = 0; index < planProbes.length; index += 1) {
+      const probe = planProbes[index];
+      const previous = planProbes[index - 1];
+      if (!probe || !previous || probe.layerIndex === 0) {
+        continue;
+      }
+      expect(
+        probe.scrapPerMin / previous.scrapPerMin,
+        `${probe.state}, пятилетка ${probe.plan}: ${layerName(probe.layerIndex - 1)} → ${layerName(probe.layerIndex)}`,
+      ).toBeGreaterThanOrEqual(LAYER_PREMIUM);
+    }
+  });
+
+  it('игрок решает раз в 20–30 секунд: каждая смена дуги, первая тоже (PLAN_V1 §2.6)', () => {
+    // The first shift is the only chance the game gets with a stranger, and it
+    // used to be the worst one in the arc: sixteen cells of the first layer
+    // fitted one cargo, so the second tap of the game came on the 200th second.
+    // Every shift of the arc is held to the band, not just the first — this is
+    // the run a player actually plays, shift after shift.
+    for (const shift of progression.shifts) {
+      const where = `смена ${shift.index}, старт ${shift.startRow}`;
+      expect(shift.rhythm.typicalSec, where).toBeGreaterThanOrEqual(RHYTHM_MIN_SEC);
+      expect(shift.rhythm.typicalSec, where).toBeLessThanOrEqual(RHYTHM_MAX_SEC);
+      expect(shift.rhythm.maxSec, where).toBeLessThanOrEqual(RHYTHM_GAP_LIMIT_SEC);
+      expect(shift.rhythm.longShare, where).toBeLessThanOrEqual(LONG_SHARE_LIMIT);
+    }
   });
 
   it('форма сложности §6 цела: без залпа купол течёт и падает', () => {
@@ -1537,5 +2307,11 @@ describe('замер баланса', () => {
     expect(defenseSalvo.domeHp).toBeGreaterThan(SHAPE.salvoDomeHp - 25);
     expect(defenseSalvo.domeHp).toBeLessThan(SHAPE.salvoDomeHp + 25);
     expect(defenseSalvo.firstLeakWave ?? 0).toBeGreaterThan(defenseBare.firstLeakWave ?? 0);
+    // `SHAPE.salvoFirstLeakWave` was printed in the report and checked by
+    // nobody: the wave the salvo stops covering is half of «впритык», and the
+    // same one wave of slack the bare run gets.
+    expect(defenseSalvo.firstLeakWave).not.toBeNull();
+    expect(defenseSalvo.firstLeakWave ?? 0).toBeGreaterThanOrEqual(SHAPE.salvoFirstLeakWave - 1);
+    expect(defenseSalvo.firstLeakWave ?? 0).toBeLessThanOrEqual(SHAPE.salvoFirstLeakWave + 1);
   });
 });
