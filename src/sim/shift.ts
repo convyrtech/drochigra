@@ -40,6 +40,19 @@ export const ENTRANCE_ROW = 0;
 const EPS = 1e-9;
 
 /**
+ * Smallest slice the drill's road ever asks the shift clock for. A partial move
+ * can leave the drill a float hair short of the cell it is driving into — less
+ * than `EPS * move_rows_per_sec` of a cell — and then the honest "due in
+ * d / speed seconds" is smaller than `EPS`, `step` throws the whole slice away
+ * and the shift freezes for good: the timer stops, the drill stops, no phase
+ * ever ends it (issue #13). A slice this short covers that hair, `moveDrill`
+ * snaps onto the cell and `resolve` takes it from there; it costs less than a
+ * nanosecond of shift time. The defence floors its own events the same way
+ * (`MIN_EVENT_SEC` in src/sim/defense.ts) and for the same reason.
+ */
+const MIN_EVENT_SEC = 4 * EPS;
+
+/**
  * Safety bound for the instant-transition loop. A normal step resolves in a
  * handful of transitions; this only stops a bug from freezing the browser.
  */
@@ -416,7 +429,15 @@ function timeToNextEvent(state: ShiftState): number {
   }
   switch (drill.mode) {
     case 'moving':
-      time = Math.min(time, travelTimeSec(distanceToNextStep(state), state.balance.drill.move_rows_per_sec));
+      // Floored: a drill that is all but on top of the next cell must still ask
+      // for a slice `step` will accept, or the shift stops for ever (issue #13).
+      time = Math.min(
+        time,
+        Math.max(
+          MIN_EVENT_SEC,
+          travelTimeSec(distanceToNextStep(state), state.balance.drill.move_rows_per_sec),
+        ),
+      );
       break;
     case 'digging':
       time = Math.min(time, drill.digTotalSec - drill.digElapsedSec);

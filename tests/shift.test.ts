@@ -83,6 +83,30 @@ function layerYield(layerIndex: number): number {
 /** Digging one cell: drill it from the tunnel, then drive into it. */
 const PER_CELL_SEC = digSec(0) + travelSec(1);
 
+/** Row ranges as balance.json lists them: the tests follow the data. */
+function layerRows(layerIndex: number): readonly [number, number] {
+  const layer = balance.layers[layerIndex];
+  if (!layer) {
+    throw new Error(`no layer ${layerIndex} in balance`);
+  }
+  return layer.rows;
+}
+
+/**
+ * Runs the shift until the drill has nothing left to do. Used where the test is
+ * about where the drill stops, not about how long it took: how long a shaft
+ * takes is a balance number and it changes.
+ */
+function runUntilIdle(state: ShiftState, stepSec = 1): void {
+  for (let guard = 0; guard < 100000; guard += 1) {
+    if (state.drill.mode === 'idle' || state.phase !== 'running') {
+      return;
+    }
+    step(state, stepSec);
+  }
+  throw new Error('the drill never stopped');
+}
+
 /**
  * Digs one cell to the end and returns the time spent. Waits until the drill
  * has driven into the fresh cell, which is where the next order starts from.
@@ -329,10 +353,15 @@ describe('one tap keeps the drill digging', () => {
 
   it('stops at the bottom of the grid', () => {
     const bottom = balance.shift.grid_depth;
-    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
+    // The whole shaft is far more than one shift of digging, so the clock and
+    // the waves are taken out of the way: this is about where the drill stops.
+    const state = createShift(
+      balanceWith({ cargoCapacity: 1e6, durationSec: 1e6, firstWaveSec: QUIET_WAVES }),
+      1,
+    );
     expect(aimDrill(state, START_COL, 1)).toBe(true);
 
-    step(state, 60);
+    runUntilIdle(state);
     expect(isDug(state, START_COL, bottom)).toBe(true);
     expect(state.deepestRow).toBe(bottom);
     expect(state.drill.row).toBe(bottom);
@@ -360,7 +389,7 @@ describe('one tap keeps the drill digging', () => {
     const state = createShift(balanceWith({ cargoCapacity: capacity }), 1);
     expect(aimDrill(state, START_COL, 1)).toBe(true);
 
-    step(state, 20);
+    step(state, PER_CELL_SEC * 3 + 1);
     expect(state.drill.mode).toBe('blocked');
     expect(state.drill.row).toBe(3);
     expect(isDug(state, START_COL, 3)).toBe(true);
@@ -374,7 +403,7 @@ describe('one tap keeps the drill digging', () => {
     const capacity = layerYield(0) * 2;
     const state = createShift(balanceWith({ cargoCapacity: capacity }), 1);
     aimDrill(state, START_COL, 1);
-    step(state, 20);
+    step(state, PER_CELL_SEC * 2 + 1);
     expect(state.drill.mode).toBe('blocked');
 
     expect(callElevator(state)).toBe(true);
@@ -402,40 +431,39 @@ describe('dig time by layer', () => {
     expect(isDug(state, START_COL, 1)).toBe(true);
   });
 
-  it('changes hardness exactly at the 9/10 boundary', () => {
-    const state = createShift(balanceWith({ cargoCapacity: 1e6 }), 1);
-    digDownTo(state, START_COL, 8);
+  it('changes hardness exactly where balance puts the layer boundary', () => {
+    // Both boundaries, wherever they are: the last row of a layer still costs
+    // that layer, and the very next row already costs the one below it.
+    for (let index = 0; index + 1 < balance.layers.length; index += 1) {
+      const last = layerRows(index)[1];
+      const state = createShift(
+        balanceWith({ cargoCapacity: 1e6, durationSec: 1e6, firstWaveSec: QUIET_WAVES }),
+        1,
+      );
+      digDownTo(state, START_COL, last - 1);
 
-    const row9 = digCell(state, START_COL, 9);
-    const row10 = digCell(state, START_COL, 10);
-    const road = travelSec(1);
+      const lastRow = digCell(state, START_COL, last);
+      const nextRow = digCell(state, START_COL, last + 1);
+      const road = travelSec(1);
 
-    expect(row9).toBeGreaterThanOrEqual(digSec(0) + road);
-    expect(row9).toBeLessThan(digSec(1) + road);
-    expect(row10).toBeGreaterThanOrEqual(digSec(1) + road);
-    expect(row10).toBeLessThan(digSec(2) + road);
-  });
-
-  it('changes hardness exactly at the 19/20 boundary', () => {
-    const state = createShift(balanceWith({ cargoCapacity: 1e6, durationSec: 1e6 }), 1);
-    digDownTo(state, START_COL, 18);
-
-    const row19 = digCell(state, START_COL, 19);
-    const row20 = digCell(state, START_COL, 20);
-    const road = travelSec(1);
-
-    expect(row19).toBeGreaterThanOrEqual(digSec(1) + road);
-    expect(row19).toBeLessThan(digSec(2) + road);
-    expect(row20).toBeGreaterThanOrEqual(digSec(2) + road);
+      expect(lastRow).toBeGreaterThanOrEqual(digSec(index) + road);
+      expect(lastRow).toBeLessThan(digSec(index + 1) + road);
+      expect(nextRow).toBeGreaterThanOrEqual(digSec(index + 1) + road);
+    }
   });
 
   it('drops the scrap of the layer it dug', () => {
-    const state = createShift(balanceWith({ cargoCapacity: 1e6, durationSec: 1e6 }), 1);
+    const state = createShift(
+      balanceWith({ cargoCapacity: 1e6, durationSec: 1e6, firstWaveSec: QUIET_WAVES }),
+      1,
+    );
     digCell(state, START_COL, 1);
     expect(state.cargo).toBe(layerYield(0));
 
-    digDownTo(state, START_COL, 10);
-    expect(state.cargo).toBe(layerYield(0) * 9 + layerYield(1));
+    // Down through the whole first layer and one row into the second one.
+    const firstRow = layerRows(1)[0];
+    digDownTo(state, START_COL, firstRow);
+    expect(state.cargo).toBe(layerYield(0) * (firstRow - 1) + layerYield(1));
   });
 
   it('retargeting loses the progress of the abandoned cell', () => {
@@ -662,12 +690,16 @@ describe('crystals', () => {
   });
 
   it('does not put crystals in the cargo and never loses them', () => {
-    const load = layerYield(0) * 9 + layerYield(1) * 3;
+    // The whole first layer plus three rows of the second one: deep enough for
+    // the crystal rolls to have something to roll on.
+    const secondTop = layerRows(1)[0];
+    const deepRow = secondTop + 2;
+    const load = layerYield(0) * (secondTop - 1) + layerYield(1) * 3;
     const state = createShift(
       balanceWith({ cargoCapacity: load, durationSec: 1e6, firstWaveSec: QUIET_WAVES }),
       99,
     );
-    digDownTo(state, START_COL, 12);
+    digDownTo(state, START_COL, deepRow);
     const crystals = state.crystals;
     expect(state.cargo).toBe(load);
 
@@ -691,6 +723,45 @@ describe('step guards', () => {
     step(state, 0);
     expect(state.timeLeftSec).toBe(balance.shift.duration_sec);
     expect(state.drill.mode).toBe('idle');
+  });
+
+  /**
+   * Issue #13. `step` cuts time on the next event and drops the whole slice
+   * when it is not greater than its float slack (1e-9 s). A partial move can
+   * leave the drill a hair short of the cell it is driving into: closer than
+   * `slack * move_rows_per_sec`, so the honest travel time is under the slack,
+   * yet further than the slack itself, so `moveDrill` does not snap onto the
+   * cell either. Before the fix nothing resolved that state and the shift
+   * froze for good — the timer stopped, the drill stopped, and the player was
+   * left inside a shift no phase could ever end.
+   */
+  it('never freezes when the drill stops a float hair short of a cell', () => {
+    /** The slack `step` compares its slices against. Not a game number. */
+    const SLACK_SEC = 1e-9;
+    const speed = balance.drill.move_rows_per_sec;
+    // Middle of the window that used to freeze: wider than the slack in cells,
+    // narrower than the distance the drill covers in one slack of time.
+    const gap = (SLACK_SEC + SLACK_SEC * speed) / 2;
+
+    const state = createShift(balance, 1);
+    expect(aimDrill(state, START_COL, 1)).toBe(true);
+    step(state, digSec(0));
+    // The cell is open and the drill is driving into it, one whole cell away.
+    expect(state.drill.mode).toBe('moving');
+    expect(state.drill.row).toBe(ENTRANCE_ROW);
+
+    step(state, (1 - gap) / speed);
+    expect(state.drill.mode).toBe('moving');
+    expect(state.drill.row).toBeLessThan(1);
+    expect(1 - state.drill.row).toBeLessThan(SLACK_SEC * speed);
+
+    const timeLeft = state.timeLeftSec;
+    step(state, PER_CELL_SEC);
+    // The time is spent on work, not swallowed: the drill drove into the cell
+    // it had almost reached and carried on digging downwards.
+    expect(state.timeLeftSec).toBeCloseTo(timeLeft - PER_CELL_SEC, 6);
+    expect(isDug(state, START_COL, 2)).toBe(true);
+    expect(state.drill.row).toBeGreaterThan(1);
   });
 });
 
@@ -826,7 +897,10 @@ describe('the conveyor hands the scrap over by itself', () => {
     );
     expect(aimDrill(state, START_COL, 1)).toBe(true);
 
-    for (let guard = 0; guard < 400; guard += 1) {
+    for (let guard = 0; guard < 100000; guard += 1) {
+      if (state.deepestRow >= balance.shift.grid_depth) {
+        break;
+      }
       step(state, 0.25);
       expect(isCargoBlocked(state)).toBe(false);
       expect(state.cargo).toBe(0);
@@ -899,7 +973,9 @@ describe('the conveyor hands the scrap over by itself', () => {
       { autoBank: true },
     );
     expect(aimDrill(state, START_COL, 1)).toBe(true);
-    step(state, 10);
+    // One cell handed over before the enemy finishes its walk: how long a cell
+    // takes is a balance number, so it is taken from balance and not written in.
+    step(state, PER_CELL_SEC + 0.01);
     const banked = state.banked;
     expect(banked).toBeGreaterThan(0);
 

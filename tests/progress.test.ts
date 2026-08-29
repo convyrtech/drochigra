@@ -667,15 +667,18 @@ describe('a shift never takes anything away (PLAN_V1 §2.1)', () => {
   });
 
   it('adds something for a breached shift that still handed scrap over and dug deeper', () => {
-    const before = profileWith({ wallet: { [SCRAP]: 100 }, deepestRow: 4, bestShiftScrap: 50 });
+    // Deep enough to open a checkpoint, wherever balance puts them: the point
+    // is that a breach still pays for the depth it reached.
+    const deeper = balance.shift.checkpoint_every_rows * 2;
+    const before = profileWith({ wallet: { [SCRAP]: 100 }, deepestRow: 1, bestShiftScrap: 50 });
     const outcome = applyShiftResult(
       balance,
       before,
-      report({ mined: 800, banked: 300, deepestRow: 11, crystals: 2, endReason: 'breach' }),
+      report({ mined: 800, banked: 300, deepestRow: deeper, crystals: 2, endReason: 'breach' }),
     );
     expect(walletAmount(outcome.profile, SCRAP)).toBeGreaterThan(100);
     expect(walletAmount(outcome.profile, CRYSTAL)).toBeGreaterThan(2);
-    expect(outcome.profile.deepestRow).toBe(11);
+    expect(outcome.profile.deepestRow).toBe(deeper);
     expect(outcome.profile.bestShiftScrap).toBe(300);
   });
 
@@ -1333,7 +1336,12 @@ describe('save migration v1 -> v2', () => {
 
   it('keeps the depth open and the plan where they were', () => {
     const loaded = profileFromSaved(balance, SAVE_V1, HOUR_MS) as Profile;
-    expect(deepestOpenCheckpoint(balance, loaded)).toBe(20);
+    // The deepest checkpoint the saved depth reaches, wherever balance spaces
+    // them: the migration must not move the player up or down the shaft.
+    const every = balance.shift.checkpoint_every_rows;
+    expect(deepestOpenCheckpoint(balance, loaded)).toBe(
+      Math.floor(SAVE_V1.deepestRow / every) * every,
+    );
     expect(shiftQuota(balance, loaded)).toBe(
       Math.max(balance.shift.quota_min, Math.round(940 * balance.shift.quota_share_of_best)),
     );

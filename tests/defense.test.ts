@@ -39,12 +39,17 @@ function balanceWith(patch: {
   countBase?: number;
   countPerWave?: number;
   enemyHpBase?: number;
+  drillSpeed?: number;
 }): Balance {
   return {
     ...balance,
     shift: {
       ...balance.shift,
       duration_sec: patch.durationSec ?? balance.shift.duration_sec,
+    },
+    drill: {
+      ...balance.drill,
+      speed_base: patch.drillSpeed ?? balance.drill.speed_base,
     },
     cargo: {
       ...balance.cargo,
@@ -67,6 +72,13 @@ function balanceWith(patch: {
 
 /** Enemies too tough for the turret: the test is about what reaches the dome. */
 const UNKILLABLE = 1e6;
+
+/**
+ * A drill that opens a cell in a blink. Dig time is a balance number and these
+ * tests are about the dome, so where the mining only has to be *done* before
+ * the enemies walk in, it is made instant instead of timed.
+ */
+const INSTANT_DRILL = 1000;
 
 /** Exactly one enemy per wave, so a single arrival can be measured. */
 const SINGLE = { countBase: 0, countPerWave: 1 };
@@ -185,8 +197,9 @@ describe('waves coming out', () => {
     );
 
     const deep = createShift(balanceWith({ firstWaveSec: 1, enemyHpBase: UNKILLABLE }), 1);
-    // Row 12 is layer II: the wave is drawn from where the drill is, not from the surface.
-    deep.drill.row = 12;
+    // The top row of layer II, wherever balance puts it: the wave is drawn from
+    // where the drill is, not from the surface.
+    deep.drill.row = balance.layers[1]?.rows[0] ?? 0;
     step(deep, 1.1);
     const types = new Set(deep.defense.enemies.map((enemy) => enemy.type));
     expect(types).toEqual(new Set(balance.layers[1]?.enemies));
@@ -372,6 +385,8 @@ describe('the dome breaking', () => {
         // the enemy walks, so the numbers below are the ones the test set up.
         cargoCapacity: layerYield(0),
         enemyHpBase: UNKILLABLE,
+        // Two cells and a trip to the lift have to fit inside one enemy's walk.
+        drillSpeed: INSTANT_DRILL,
         ...SINGLE,
       }),
       1,
@@ -379,7 +394,7 @@ describe('the dome breaking', () => {
 
     digCell(state, START_COL, 1);
     callElevator(state);
-    step(state, 0.125 + balance.shift.elevator_bank_sec + 0.05);
+    step(state, 1 / balance.drill.move_rows_per_sec + balance.shift.elevator_bank_sec + 0.05);
     expect(state.banked).toBe(layerYield(0));
 
     digCell(state, START_COL, 2);

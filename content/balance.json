@@ -9,9 +9,9 @@
   "shift": {
     "duration_sec": 360,
     "grid_width": 9,
-    "grid_depth": 30,
+    "grid_depth": 108,
     "elevator_bank_sec": 2,
-    "checkpoint_every_rows": 5,
+    "checkpoint_every_rows": 18,
     "crystals_per_new_checkpoint": 1,
     "quota_share_of_best": 0.6,
     "quota_min": 200,
@@ -30,18 +30,18 @@
   },
 
   "cargo": {
-    "capacity_base": 120
+    "capacity_base": 240
   },
 
   "drill": {
     "speed_base": 1.0,
-    "move_rows_per_sec": 8
+    "move_rows_per_sec": 6
   },
 
   "layers": [
-    { "id": "L1", "name": "Ледяной Покров", "rows": [0, 9],   "hardness_sec": 0.6, "yield": 5,  "crystal_chance": 0.0,  "enemies": ["aberration"] },
-    { "id": "L2", "name": "Пещеры Эха",     "rows": [10, 19], "hardness_sec": 1.2, "yield": 14, "crystal_chance": 0.06, "enemies": ["aberration", "drowned"] },
-    { "id": "L3", "name": "Подлёдный Океан","rows": [20, 30], "hardness_sec": 2.0, "yield": 30, "crystal_chance": 0.12, "enemies": ["aberration", "drowned", "moth"] }
+    { "id": "L1", "name": "Ледяной Покров", "rows": [0, 35],  "hardness_sec": 12, "yield": 15,  "crystal_chance": 0.0,  "enemies": ["aberration"] },
+    { "id": "L2", "name": "Пещеры Эха",     "rows": [36, 71], "hardness_sec": 30, "yield": 75,  "crystal_chance": 0.10, "enemies": ["aberration", "drowned"] },
+    { "id": "L3", "name": "Подлёдный Океан","rows": [72, 108],"hardness_sec": 40, "yield": 220, "crystal_chance": 0.25, "enemies": ["aberration", "drowned", "moth"] }
   ],
 
   "enemies": {
@@ -62,13 +62,13 @@
   },
 
   "upgrades": {
-    "cost_growth": 1.15,
+    "cost_growth": 1.06,
     "items": {
-      "drill":    { "name": "Бур",      "effect": "+8% скорость копки",       "currency": "scrap",   "cost_base": 50,  "step": 0.08 },
+      "drill":    { "name": "Бур",      "effect": "+4% скорость копки",       "currency": "scrap",   "cost_base": 50,  "step": 0.04 },
       "turret":   { "name": "Турель",   "effect": "+10% урон",                "currency": "scrap",   "cost_base": 60,  "step": 0.10 },
       "dome":     { "name": "Купол",    "effect": "+15 здоровья",             "currency": "scrap",   "cost_base": 70,  "step": 15 },
-      "cargo":    { "name": "Карго",    "effect": "+25% ёмкость",             "currency": "scrap",   "cost_base": 40,  "step": 0.25 },
-      "hangar":   { "name": "Ангар",    "effect": "+20% оффлайн-добыча",      "currency": "scrap",   "cost_base": 80,  "step": 0.20 },
+      "cargo":    { "name": "Карго",    "effect": "+6,25% ёмкость",          "currency": "scrap",   "cost_base": 40,  "step": 0.0625 },
+      "hangar":   { "name": "Ангар",    "effect": "+8% оффлайн-добыча",       "currency": "scrap",   "cost_base": 80,  "step": 0.08 },
       "salvo":    { "name": "Залп",     "effect": "-1 сек откат",             "currency": "scrap",   "cost_base": 100, "step": -1,   "max_level": 8 },
       "elevator": { "name": "Лифт",     "effect": "+20% скорость бура",       "currency": "crystal", "cost_base": 3,   "step": 0.20, "cost_growth": 1.4 },
       "conveyor": { "name": "Конвейер", "effect": "добыча уезжает наверх сама","currency": "crystal", "cost_base": 25, "step": 1,    "max_level": 1 }
@@ -76,7 +76,7 @@
   },
 
   "offline": {
-    "scrap_per_hour_per_depth": 20,
+    "scrap_per_hour_per_depth": 2,
     "cap_hours": 6
   },
 
