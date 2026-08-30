@@ -5,7 +5,7 @@
  * never touches window.Telegram. Outside Telegram every call degrades to a
  * harmless no-op, so the game runs exactly as before in a plain browser, a local
  * dev server or on GitHub Pages. No secrets, no requests to a bot — the
- * ready()/theme/fullscreen calls are all part of the WebView page API.
+ * ready()/swipe/colour/fullscreen calls are all part of the WebView page API.
  *
  * One trap is worth stating once (issue #12): the official script is loaded by
  * index.html in every browser and defines window.Telegram.WebApp everywhere, so
@@ -34,10 +34,20 @@ interface TelegramWebAppLike {
   };
   /** Push the window out of a collapsed Mini App to full-height, if supported. */
   expand?(): void;
-  colorScheme?: 'light' | 'dark';
-  themeParams?: { bg_color?: string; text_color?: string };
   /** True when the user's Telegram client is at least a Bot API version. */
   isVersionAtLeast?(version: string): boolean;
+  /**
+   * Stop a vertical swipe from closing or minimising the Mini App
+   * (Bot API 7.7+). The one gesture the game has is a vertical swipe over the
+   * shaft, so without this the player scrolls the mine and leaves the game.
+   */
+  disableVerticalSwipes?(): void;
+  /** Colour of the area Telegram paints around the Mini App (Bot API 6.1+). */
+  setBackgroundColor?(color: string): void;
+  /** Colour of Telegram's own header above the Mini App (hex: Bot API 6.9+). */
+  setHeaderColor?(color: string): void;
+  /** Colour of Telegram's bottom action bar (Bot API 7.10+). */
+  setBottomBarColor?(color: string): void;
   /** Edge-to-edge Mini App (Bot API 8.0+). */
   requestFullscreen?(): Promise<boolean> | void;
   /** Keep the Mini App portrait (Bot API 8.0+). */
@@ -53,6 +63,47 @@ declare global {
     Telegram?: TelegramLike;
   }
 }
+
+/**
+ * The Bot API version each optional call was introduced in. Telegram's own
+ * script checks the same numbers and only prints a console warning when a call
+ * is too new for the client, but two of them do more than warn — a hex header
+ * colour throws below 6.9 — and a warning on every launch is noise we can just
+ * not make. So every call below is asked for by version first.
+ */
+const SINCE = {
+  /** disableVerticalSwipes / enableVerticalSwipes. */
+  verticalSwipes: '7.7',
+  /** setBackgroundColor. */
+  backgroundColor: '6.1',
+  /** setHeaderColor with a hex colour; older clients take theme keys only. */
+  headerColor: '6.9',
+  /** setBottomBarColor. */
+  bottomBarColor: '7.10',
+  /** requestFullscreen and lockOrientation. */
+  fullscreen: '8.0',
+} as const;
+
+/**
+ * The two fixed boxes index.html lays out: the Phaser parent and the «turn the
+ * phone» overlay. Both are sized to the window, and inside Telegram the window
+ * is not the visible area — see `bindTelegramViewport()`.
+ */
+const GAME_BOX_ID = 'game';
+const ROTATE_BOX_ID = 'rotate';
+
+/**
+ * The page's own background, kept in one place: the `theme-color` meta of
+ * index.html. Telegram's chrome is painted with it so the player's own light
+ * theme cannot show through around a dark game (see `applyTgTheme`).
+ */
+const PAGE_BACKGROUND = '#05070d';
+
+/**
+ * The colours Telegram's own parseColorToHex accepts: `#rgb` and `#rrggbb`.
+ * Anything else — an 8-digit hex, a colour name — makes the setters throw.
+ */
+const TELEGRAM_HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 /**
  * The Telegram WebView API object, or null when the script did not define one.
@@ -106,9 +157,56 @@ function isTelegram(): boolean {
 }
 
 /**
+ * Is this client's Bot API new enough for a call? The stub the script leaves in
+ * a plain browser answers «6.0» to everything, so this is false there for every
+ * version below, which is what keeps the web build silent and unchanged.
+ *
+ * It answers a boolean and nothing else, on purpose: every caller asks it before
+ * a `try`, so a client whose isVersionAtLeast throws would otherwise take out
+ * the call that was about to be guarded — and, in `setupFullscreenOnGesture`,
+ * the listeners that had not been registered yet.
+ */
+function supports(app: TelegramWebAppLike, version: string): boolean {
+  if (typeof app.isVersionAtLeast !== 'function') {
+    return false;
+  }
+  try {
+    return app.isVersionAtLeast(version) === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Take the vertical swipe away from Telegram and give it to the shaft.
+ *
+ * `PLAN_V1` §3 has exactly one gesture: a vertical swipe over the mine, which
+ * scrolls the camera deeper. In Telegram a vertical swipe down is also the
+ * client's own «close / minimise the Mini App» gesture, so without this call the
+ * player who drags the shaft down leaves the game. Bot API 7.7+; the call posts
+ * a message to the client and needs no user gesture, so it is made at startup.
+ *
+ * Returns whether the call was actually made, which is what the tests read.
+ */
+function disableVerticalSwipes(app: TelegramWebAppLike): boolean {
+  if (!supports(app, SINCE.verticalSwipes) || typeof app.disableVerticalSwipes !== 'function') {
+    // Older client, or a build of the script without the method: the swipe stays
+    // Telegram's. Nothing else in the game depends on this having worked.
+    return false;
+  }
+  try {
+    app.disableVerticalSwipes();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Tell Telegram the app has loaded; this hides the placeholder Telegram shows
- * while the frame is loading. It also expand()s the Mini App to full height and
- * registers the first-gesture fullscreen/orientation takeover (Bot API 8.0+).
+ * while the frame is loading. It also expand()s the Mini App to full height,
+ * takes the vertical swipe away from the client (Bot API 7.7+) and registers the
+ * first-gesture fullscreen/orientation takeover (Bot API 8.0+).
  * Safe to call at any time; outside Telegram every step is a no-op.
  */
 function initTg(): void {
@@ -118,43 +216,124 @@ function initTg(): void {
   }
   try {
     app.ready();
+    // expand() first: everything measured afterwards (the viewport binding
+    // below, Phaser's first fit) should see the full-height Mini App, not the
+    // collapsed sheet Telegram can open it in.
     app.expand?.();
+    disableVerticalSwipes(app);
     setupFullscreenOnGesture(app);
   } catch {
     // The WebView API should never throw here, but never let it block startup.
   }
+  bindTelegramViewport();
 }
 
 /**
- * Match the page chrome to the Telegram theme without touching the game's own
- * palette (that lives in layout.ts and is intentionally fixed). The FIT canvas
- * covers most of the screen; this only makes the unpainted frame around it
- * blend with the Telegram background (themeParams.bg_color) and keeps native
- * controls (scrollbars, select menus) on the right colour scheme. Outside
- * Telegram the page keeps its fixed dark CSS, unchanged.
+ * Keep the game's own dark page, and paint Telegram's chrome to match it.
+ *
+ * The game's palette is fixed (`layout.ts`) and the page around the FIT canvas
+ * is fixed dark (`index.html`). Copying `themeParams.bg_color` onto the page —
+ * which this used to do — meant a player on the light Telegram theme got white
+ * letterbox bars around a dark pixel-art game, which is exactly the «foreign
+ * theme showing through» that `GOAL_V1` condition 2 rules out. So the flow is
+ * reversed: our colour goes out to Telegram, not Telegram's colour into us.
+ *
+ * Every call is version-gated and optional; on a client too old for them the
+ * page is still dark and only Telegram's own header stays themed.
+ * Outside Telegram nothing here runs at all.
  */
 function applyTgTheme(): void {
   const app = tg();
-  // The stub outside Telegram reports a colour scheme of its own; the plain web
-  // build keeps its fixed dark page, so the theme is applied only for a real
-  // Mini App session.
-  if (!app || !isTelegram()) {
+  // Not `isTelegram()`. A session says a launch was signed; what this needs to
+  // know is whether there is a Telegram client on the other end at all, and a
+  // launch that arrived with an empty initData is still a launch — gating the
+  // chrome on the session would leave exactly that player with a light frame
+  // around a dark game. Any real client answers 6.1 or newer; the script's stub
+  // in a plain browser answers «6.0» to everything, so the web build is silent.
+  if (!app || !supports(app, SINCE.backgroundColor)) {
     return;
   }
+  const color = pageBackground();
+  // One try per call, not one around all four. `setBackgroundColor` and friends
+  // throw on a colour they cannot parse, and sharing a try means the first
+  // refusal silently swallows the two calls behind it.
+  paint(() => {
+    // Native controls (scrollbars, select menus) follow the page, not the client.
+    document.documentElement.style.colorScheme = 'dark';
+  });
+  paint(() => app.setBackgroundColor?.(color));
+  // A hex header colour needs 6.9. Below that the method accepts only the theme
+  // keys (`bg_color` / `secondary_bg_color`) and throws on anything else — and
+  // those keys are the light theme we are covering up, so on an older client the
+  // header is simply left alone.
+  if (supports(app, SINCE.headerColor)) {
+    paint(() => app.setHeaderColor?.(color));
+  }
+  if (supports(app, SINCE.bottomBarColor)) {
+    paint(() => app.setBottomBarColor?.(color));
+  }
+}
+
+/** Run one cosmetic step; a failed one must never take the next one with it. */
+function paint(step: () => void): void {
   try {
-    if (app.colorScheme) {
-      document.documentElement.style.colorScheme = app.colorScheme;
+    step();
+  } catch {
+    // Colouring is cosmetic; failures must not affect the game.
+  }
+}
+
+/**
+ * The page background as index.html declares it, with the value as a fallback.
+ *
+ * The test is not «is this valid CSS» but «will Telegram parse it»: its
+ * parseColorToHex takes `#rgb`, `#rrggbb` and `rgb()/rgba()` and nothing else,
+ * and a colour it refuses makes setBackgroundColor **throw** rather than return.
+ * `#05070dff` is perfectly good CSS and would have turned the whole chrome back
+ * to the player's own light theme, which is the bug this file exists to stop.
+ */
+function pageBackground(): string {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  const declared = meta?.content?.trim();
+  return declared !== undefined && TELEGRAM_HEX.test(declared) ? declared : PAGE_BACKGROUND;
+}
+
+/**
+ * Size the page to Telegram's visible area instead of the WebView window.
+ *
+ * `window.innerHeight` inside a Mini App is the height of the WebView, and
+ * Telegram's visible area is not the same number: a Mini App can open as a
+ * part-height sheet, and while it is being dragged the visible area shrinks
+ * while the window does not. Telegram publishes the honest number as the CSS
+ * variable `--tg-viewport-stable-height` (the last *settled* height, so it does
+ * not jitter through the drag), and this pins the two fixed boxes of index.html
+ * to it. Phaser's Scale.FIT measures the parent box, so the canvas follows.
+ *
+ * There is deliberately no “are we in Telegram” gate on this. The official
+ * script sets the variable in every browser — 100vh when no client ever sent a
+ * viewport — so outside Telegram the calc resolves to exactly the box index.html
+ * already lays out, and the web build is unchanged. A gate would only buy the
+ * chance of a real Mini App launch failing the gate and being sized to the
+ * WebView instead of to the screen the player can see.
+ */
+function bindTelegramViewport(): void {
+  try {
+    const stable = 'var(--tg-viewport-stable-height, 100vh)';
+    const game = document.getElementById(GAME_BOX_ID);
+    if (game) {
+      // The safe-area insets are taken off the box in index.html by `top` and
+      // `bottom`; with an explicit height `bottom` is ignored, so both insets
+      // have to come out of the height instead.
+      game.style.height = `calc(${stable} - var(--safe-top, 0px) - var(--safe-bottom, 0px))`;
     }
-    const bg = app.themeParams?.bg_color;
-    if (bg) {
-      document.body.style.backgroundColor = bg;
-      const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-      if (meta) {
-        meta.content = bg;
-      }
+    const rotate = document.getElementById(ROTATE_BOX_ID);
+    if (rotate) {
+      // The overlay is a full-bleed blocker; it only has to stop its centred
+      // message from being centred in a box taller than the player can see.
+      rotate.style.height = stable;
     }
   } catch {
-    // Theming is cosmetic; failures must not affect the game.
+    // A layout hint only: without it the page keeps the box index.html ships.
   }
 }
 
@@ -171,8 +350,7 @@ function applyTgTheme(): void {
 function setupFullscreenOnGesture(app: TelegramWebAppLike): void {
   // Both calls need Bot API 8.0+. On older clients the official script prints a
   // console error if they are attempted, so gate them on the version support.
-  const supported =
-    typeof app.isVersionAtLeast === 'function' && app.isVersionAtLeast('8.0');
+  const supported = supports(app, SINCE.fullscreen);
   const onGesture = (): void => {
     try {
       if (supported) {
@@ -202,4 +380,5 @@ function setupFullscreenOnGesture(app: TelegramWebAppLike): void {
   window.addEventListener('touchend', onGesture);
 }
 
-export { tg, hasTelegramSession, isTelegram, initTg, applyTgTheme };
+export { tg, hasTelegramSession, isTelegram, initTg, applyTgTheme, disableVerticalSwipes };
+export type { TelegramWebAppLike };

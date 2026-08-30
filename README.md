@@ -39,7 +39,7 @@ npm install       # один раз
 npm run dev       # игра на localhost, правки видны сразу
 npm run test      # проверки логики
 npm run measure   # прогон баланса: дуга до дна, доходность слоёв, форма обороны
-npm run build     # папка dist/ — её же заливать на itch.io
+npm run build     # папка dist/ — она же едет в Telegram (GitHub Pages) и на itch.io
 ```
 
 ## Документы
@@ -52,7 +52,7 @@ npm run build     # папка dist/ — её же заливать на itch.io
 
 ## Статус
 
-Разработка первой версии. Цель — публикация на itch.io, затем Google Play.
+Разработка первой версии. Цель — публикация в Telegram (Mini App), затем itch.io и Google Play.
 Что сделано и что в работе — в задачах репозитория (Issues), по одной на шаг плана.
 
 ## Стек

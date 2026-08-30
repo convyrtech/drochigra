@@ -11,8 +11,9 @@
 
 ## Стек
 
-TypeScript + Phaser 3 + Vite. Сборка — статика для itch.io. Google Play позже через Capacitor
-из того же кода. Тесты — vitest.
+TypeScript + Phaser 3 + Vite. Сборка — статика: площадка релиза номер один — **Telegram Mini App**
+(отдаётся по HTTPS с GitHub Pages), itch.io — следом из той же папки `dist/` (`PLAN_V1.md` §10,
+шаги 8 и 9). Google Play позже через Capacitor из того же кода. Тесты — vitest.
 
 ## Структура
 
