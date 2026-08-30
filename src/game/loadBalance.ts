@@ -1,4 +1,4 @@
-import type { Balance } from '../sim/balance.js';
+import { balanceProblems, type Balance } from '../sim/balance.js';
 
 /**
  * Loads content/balance.json at runtime.
@@ -18,6 +18,15 @@ export async function loadBalance(): Promise<Balance> {
   const raw: unknown = await response.json();
   if (!isBalance(raw)) {
     throw new Error('content/balance.json не похож на баланс: нет shift, drill или layers');
+  }
+
+  // The shape is right; the numbers still can be unplayable. `balanceProblems`
+  // knows the few that are walls rather than sliders — a mine that cannot be dug
+  // has to say so here, in one clear line, instead of opening as a shift where
+  // the drill silently never starts.
+  const problems = balanceProblems(raw);
+  if (problems.length > 0) {
+    throw new Error(`content/balance.json: ${problems.join('; ')}`);
   }
   return raw;
 }

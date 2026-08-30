@@ -875,6 +875,12 @@ interface UpgradeState {
   readonly upgrades: UpgradeLevels;
   /** Five-year plan the state is measured in. Absent means the first one. */
   readonly plan?: number;
+  /**
+   * `prestige.yield_mult_per_tier` the state is measured with. Absent means the
+   * one balance.json holds — see `MEASURED_YIELD_MULTS` for why anything else is
+   * ever measured.
+   */
+  readonly yieldMult?: number;
 }
 
 const RHYTHM_STATES: readonly UpgradeState[] = [
@@ -923,6 +929,42 @@ const RHYTHM_STATES: readonly UpgradeState[] = [
  */
 const MEASURED_PLANS: readonly number[] = [1, 2, 3, 5];
 
+/**
+ * `prestige.yield_mult_per_tier` values the plan invariants sweep, and why the
+ * one in balance.json is not enough.
+ *
+ * The multiplier is a number the owner edits by hand — «правь смело», says the
+ * first line of the file — and for a while every plan invariant here read it
+ * from balance.json and measured that one value. It happened to be 2, and 2 is
+ * the friendliest number in the set: it keeps every yield and every cargo whole,
+ * so the arithmetic downstream had nothing to round and nothing to lose. Change
+ * that single digit to 1.1 and the second plan used to hand the player a mine
+ * with zero cells per trip in the deepest layer, at cargo level zero, with no
+ * purchase able to buy the way out — the exact blocker these invariants exist to
+ * catch, invisible to them because they only ever ran on the friendly number.
+ *
+ * So the sweep covers the shapes rather than the current setting: whole (2, 3),
+ * a half (1.5, 2.5) which rounds the ore up past the backpack, a quarter (1.25),
+ * and 1.1 — the meanest of them, because a tenth is too small to survive any
+ * rounding and it breaks in the second plan at level zero.
+ */
+const MEASURED_YIELD_MULTS: readonly number[] = [1.1, 1.25, 1.5, 2, 2.5, 3];
+
+/**
+ * Plans the multiplier sweep walks. Wider than `MEASURED_PLANS` because it is
+ * pure arithmetic and costs nothing: a compounding multiplier that survives five
+ * tiers can still fail on the sixth.
+ */
+const SWEPT_PLANS: readonly number[] = [1, 2, 3, 4, 5, 6];
+
+/** Cargo levels the multiplier sweep walks: nothing bought through the arc's end. */
+const SWEPT_CARGO_LEVELS = 32;
+
+/** The same balance with another five-year multiplier. Nothing else moves. */
+function withYieldMult(balance: Balance, mult: number): Balance {
+  return { ...balance, prestige: { ...balance.prestige, yield_mult_per_tier: mult } };
+}
+
 /** Upgrade states every plan is measured under: bare, mid-arc, end of arc. */
 const PLAN_STATES: readonly UpgradeState[] = [
   { name: 'без прокачки', upgrades: {} },
@@ -949,9 +991,10 @@ interface RhythmProbe {
  */
 function probeRhythm(layerIndex: number, state: UpgradeState): RhythmProbe {
   const plan = state.plan ?? 1;
+  const base = state.yieldMult === undefined ? BALANCE : withYieldMult(BALANCE, state.yieldMult);
   // The same order the game itself uses (`shiftBalance`): the plan first, the
   // levels bought on top of it.
-  const balance = effectiveBalance(planBalance(quietWaves(BALANCE), plan), state.upgrades);
+  const balance = effectiveBalance(planBalance(quietWaves(base), plan), state.upgrades);
   const { top } = layerRows(balance, layerIndex);
   const run = runMine({
     balance,
@@ -2025,10 +2068,31 @@ describe('замер баланса', () => {
     // ore while leaving the backpack at 96 walked straight through it: from the
     // second plan on the richest cell was 192 and the cargo 96, so the reward
     // for winning was a mine nobody could dig.
-    for (const plan of MEASURED_PLANS) {
-      const bent = planBalance(BALANCE, plan);
-      const richest = Math.max(...bent.layers.map((layer) => layer.yield));
-      expect(bent.cargo.capacity_base, `пятилетка ${plan}`).toBeGreaterThanOrEqual(richest);
+    //
+    // Counted twice, and the second time is the one that matters. `planBalance`
+    // is exact arithmetic and passes this wall for any multiplier by
+    // construction; the game does not run on `planBalance`, it runs on whole
+    // scrap out of `effectiveBalance`, and that is where a fractional multiplier
+    // used to walk through the wall again — `round(105.6) = 106` of ore against
+    // 105.6 of backpack. So the sweep goes over the multiplier as well: what has
+    // to hold is that the numbers the *shift* is handed obey the wall.
+    for (const mult of MEASURED_YIELD_MULTS) {
+      const balance = withYieldMult(BALANCE, mult);
+      for (const plan of SWEPT_PLANS) {
+        const exact = planBalance(balance, plan);
+        expect(
+          exact.cargo.capacity_base,
+          `множитель ${mult}, пятилетка ${plan}, planBalance`,
+        ).toBeGreaterThanOrEqual(Math.max(...exact.layers.map((layer) => layer.yield)));
+        for (let level = 0; level <= SWEPT_CARGO_LEVELS; level += 1) {
+          const bent = effectiveBalance(exact, { cargo: level });
+          const richest = Math.max(...bent.layers.map((layer) => layer.yield));
+          expect(
+            bent.cargo.capacity_base,
+            `множитель ${mult}, пятилетка ${plan}, карго ${level}`,
+          ).toBeGreaterThanOrEqual(richest);
+        }
+      }
     }
   });
 
@@ -2198,20 +2262,34 @@ describe('замер баланса', () => {
     // Every level, in every five-year plan: the plan multiplies the ore too, so
     // walking the levels of the first plan alone proves nothing about the game
     // the player is handed for winning.
+    //
+    // And on every shape of multiplier, not only the one balance.json holds
+    // today. This is where the rounding rule of `effectiveBalance` is actually
+    // on trial: rounding the ore to the *nearest* whole scrap and leaving the
+    // backpack fractional took a cell out of the trip at every fractional
+    // multiplier and killed the deepest layer outright at 1.1; rounding both to
+    // the nearest still moved 41–49 of the cells this sweep covers. Flooring
+    // both keeps every one. Counts of moved cells depend on how wide the sweep
+    // is, so only the 41–49 — measured on exactly this grid — is quoted.
     const cellsAtZero = BALANCE.layers.map((layer) =>
       Math.floor(BALANCE.cargo.capacity_base / layer.yield),
     );
-    for (const plan of MEASURED_PLANS) {
-      for (let level = 0; level <= 60; level += 1) {
-        const balance = effectiveBalance(planBalance(BALANCE, plan), { cargo: level });
-        const where = `пятилетка ${plan}, карго ${level}`;
-        const richest = Math.max(...balance.layers.map((layer) => layer.yield));
-        expect(balance.cargo.capacity_base, where).toBeGreaterThanOrEqual(richest);
-        balance.layers.forEach((layer, index) => {
-          expect(Math.floor(balance.cargo.capacity_base / layer.yield), `${where}, ${layer.id}`).toBe(
-            cellsAtZero[index],
-          );
-        });
+    for (const mult of MEASURED_YIELD_MULTS) {
+      for (const plan of SWEPT_PLANS) {
+        for (let level = 0; level <= 60; level += 1) {
+          const balance = effectiveBalance(planBalance(withYieldMult(BALANCE, mult), plan), {
+            cargo: level,
+          });
+          const where = `множитель ${mult}, пятилетка ${plan}, карго ${level}`;
+          const richest = Math.max(...balance.layers.map((layer) => layer.yield));
+          expect(balance.cargo.capacity_base, where).toBeGreaterThanOrEqual(richest);
+          balance.layers.forEach((layer, index) => {
+            expect(
+              Math.floor(balance.cargo.capacity_base / layer.yield),
+              `${where}, ${layer.id}`,
+            ).toBe(cellsAtZero[index]);
+          });
+        }
       }
     }
   });
@@ -2226,6 +2304,28 @@ describe('замер баланса', () => {
       const where = `${probe.state}, пятилетка ${probe.plan}, ${layerName(probe.layerIndex)}`;
       expect(probe.cells, where).toBeGreaterThan(0);
       expect(probe.banked, where).toBeGreaterThan(0);
+    }
+
+    // The same live proof on the multiplier the owner might type instead of the
+    // one that is in the file. Whole numbers were the friendly case all along:
+    // at 1.1 the second plan used to open zero cells of the third layer at cargo
+    // level zero, and no purchase could buy the way out. Two multipliers and two
+    // plans, at the two poorest states, because the poorest state is where the
+    // backpack has the least room to absorb a rounding.
+    for (const yieldMult of [1.1, 2.5]) {
+      for (const plan of [2, 3]) {
+        for (const state of [
+          { name: 'без прокачки', upgrades: {} },
+          { name: 'карго 1', upgrades: { cargo: 1 } },
+        ] satisfies readonly UpgradeState[]) {
+          for (let layerIndex = 0; layerIndex < BALANCE.layers.length; layerIndex += 1) {
+            const probe = probeRhythm(layerIndex, { ...state, plan, yieldMult });
+            const where = `множитель ${yieldMult}, ${state.name}, пятилетка ${plan}, ${layerName(layerIndex)}`;
+            expect(probe.cells, where).toBeGreaterThan(0);
+            expect(probe.banked, where).toBeGreaterThan(0);
+          }
+        }
+      }
     }
   });
 

@@ -295,7 +295,11 @@ export function effectiveBalance(balance: Balance, upgrades: UpgradeLevels): Bal
     },
     cargo: {
       ...balance.cargo,
-      capacity_base: scaled(balance.cargo.capacity_base, step(CARGO_ID), level(CARGO_ID)),
+      // Floored for the same reason the yield below is, and in the same breath:
+      // see the note there. The two are one decision, not two.
+      capacity_base: Math.floor(
+        scaled(balance.cargo.capacity_base, step(CARGO_ID), level(CARGO_ID)),
+      ),
     },
     // The cargo branch moves the backpack and the ore it carries by the same
     // share, and that is the whole point of it (PLAN_V1 §7).
@@ -322,15 +326,38 @@ export function effectiveBalance(balance: Balance, upgrades: UpgradeLevels): Bal
     // Whatever bends the yield has to bend the cargo with it; this branch is one
     // such place and the plan is the other.
     //
-    // The yield is rounded, not floored: it has to stay a whole number so the
-    // HUD never prints «КАРГО: 70.125 / 102», and rounding keeps the ratio
-    // closest to the one balance.json chose. That the ratio stays put — that
-    // `floor(capacity / yield)` is the same at every level of the branch, in
-    // every five-year plan — is not left to arithmetic goodwill: `npm run
-    // measure` walks the levels inside several plans and checks it.
+    // This is the only place either number becomes whole, and both become whole
+    // here, downwards. Three things force that, in this order.
+    //
+    // Whole at all: the HUD prints the pair as it is («КАРГО: 70 / 102»), and
+    // «КАРГО: 70 / 105.6» is not a number the player should ever be shown.
+    //
+    // Both, not one: this used to round the ore and leave the backpack fractional,
+    // and that is a rounding of the quotient itself. `round(105.6) = 106 > 105.6`
+    // — the richest cell stopped fitting an empty cargo, and a cell that cannot
+    // be started stops the drill for ever. It cost nothing while the multipliers
+    // of balance.json happened to be whole (2 · 96 is 192 either way) and cost
+    // the whole mine the moment the owner typed 1.1. Neither number may be
+    // rounded without the other; they are one ratio, not two numbers.
+    //
+    // Downwards, not to the nearest: flooring is the only direction that keeps
+    // the quotient itself. `floor(x / floor(y)) = floor(floor(x) / floor(y))`,
+    // so flooring the backpack costs nothing at all, and flooring the ore only
+    // ever lets *more* of it fit — while rounding the ore up can take a cell out
+    // of the trip (`floor(255 / 127.5) = 2`, `floor(255 / 128) = 1`), which is
+    // the silence of §2.6 moving by a whole cell. Rounding to the nearest is
+    // closer to the number balance.json wrote; flooring is closer to the *trip*
+    // balance.json wrote, and the trip is what §2.6 is a promise about. Measured:
+    // over plans 1…6 × cargo levels 0…32, flooring both holds every trip at its
+    // first-plan length for multipliers 1.1, 1.25, 1.5, 2, 2.5, 3 and 4, while
+    // rounding both — dead mine fixed, trip not — still moves 41–49 of them.
+    //
+    // None of this is left to arithmetic goodwill: `npm run measure` walks the
+    // levels inside several plans, on whole and fractional multipliers both, and
+    // checks that the trip and the hard wall of §5 survive.
     layers: balance.layers.map((layer) => ({
       ...layer,
-      yield: Math.round(scaled(layer.yield, step(CARGO_ID), level(CARGO_ID))),
+      yield: Math.floor(scaled(layer.yield, step(CARGO_ID), level(CARGO_ID))),
     })),
   };
 }
@@ -378,10 +405,17 @@ export function planTier(fiveYearPlan: number): number {
  * every plan, not only the first.
  *
  * Neither number is rounded here on purpose: the two are multiplied by one and
- * the same factor, so `capacity / yield` survives as exact arithmetic whatever
- * `yield_mult_per_tier` the owner puts in balance.json. The rounding that keeps
- * the HUD free of «КАРГО: 70.125 / 102» happens once, in `effectiveBalance`, on
- * top of whatever the plan handed it.
+ * the same factor, so `capacity / yield` comes out of *this function* exact for
+ * any `yield_mult_per_tier` the owner puts in balance.json. That is a claim
+ * about `planBalance` and nothing else — it used to be written here as though it
+ * were a claim about the game, and it is not. The game runs on whole scrap, and
+ * the plan's numbers only become whole later, in `effectiveBalance`, which is
+ * where a fractional multiplier can still cost a cell. Exactness here is worth
+ * having (rounding twice is worse than rounding once), but it guarantees nothing
+ * downstream on its own: what keeps the trip is that `effectiveBalance` floors
+ * the backpack and the ore together, and `npm run measure` walks fractional
+ * multipliers to prove it. Round one of them there and this exactness buys the
+ * player exactly nothing.
  */
 export function planBalance(balance: Balance, fiveYearPlan: number): Balance {
   const tier = planTier(fiveYearPlan);
@@ -408,11 +442,11 @@ export function planBalance(balance: Balance, fiveYearPlan: number): Balance {
  *
  * The order is fixed rather than free. The two overlap on the backpack and the
  * ore — both scale `cargo.capacity_base` and `layers[].yield` — and scaling
- * commutes, so every number here would come out the same either way but one:
- * the yield is rounded to a whole scrap, and rounding does not commute with
- * multiplication (`round(33 · 1.25) · 2 = 82`, `round(33 · 2 · 1.25) = 83`).
- * Doing the plan first means the rounding happens once, at the end, on the
- * number the player is actually shown.
+ * commutes, so every number here would come out the same either way but two:
+ * the backpack and the ore are cut down to whole scrap, and that does not
+ * commute with multiplication (`floor(33 · 1.5) · 2 = 98`,
+ * `floor(33 · 2 · 1.5) = 99`). Doing the plan first means it happens once, at
+ * the end, on the numbers the player is actually shown.
  */
 export function shiftBalance(balance: Balance, profile: Profile): Balance {
   return effectiveBalance(planBalance(balance, profile.fiveYearPlan), profile.upgrades);

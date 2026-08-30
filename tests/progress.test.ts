@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import balanceJson from '../content/balance.json' with { type: 'json' };
-import type { Balance, UpgradeItemBalance } from '../src/sim/balance.js';
+import { balanceProblems, type Balance, type UpgradeItemBalance } from '../src/sim/balance.js';
 import {
   applyShiftResult,
   buyUpgrade,
@@ -1202,8 +1202,8 @@ const MEASURED_PLANS: readonly number[] = [1, 2, 3, 5];
  * simulation for a minute. Zero means the mine is dead — the cell does not fit
  * an empty cargo, the drill blocks itself, and no arithmetic assertion notices.
  */
-function dugOneCell(plan: number, layerIndex: number): number {
-  const bent = shiftBalance(balance, profileWith({ fiveYearPlan: plan }));
+function dugOneCell(plan: number, layerIndex: number, source: Balance = balance): number {
+  const bent = shiftBalance(source, profileWith({ fiveYearPlan: plan }));
   const top = bent.layers[layerIndex]?.rows[0] ?? ENTRANCE_ROW;
   const state = createShift(bent, 1, { startRow: top });
   const col = Math.floor(bent.shift.grid_width / 2);
@@ -1336,7 +1336,7 @@ describe('shiftBalance', () => {
     // The plan doubles the ore and the cargo level lifts it again with the
     // backpack, so both multipliers are on the layer.
     expect(combined.layers[0]?.yield).toBe(
-      Math.round((balance.layers[0]?.yield ?? 0) * yieldMult * (1 + item(CARGO).step)),
+      Math.floor((balance.layers[0]?.yield ?? 0) * yieldMult * (1 + item(CARGO).step)),
     );
     expect(combined.waves.enemy_hp_base).toBeCloseTo(
       balance.waves.enemy_hp_base * balance.prestige.wave_hp_mult_per_tier ** 2,
@@ -1372,10 +1372,10 @@ describe('shiftBalance', () => {
     );
 
     // With a cargo level the two do differ, and the reason is written down in
-    // `shiftBalance`: the yield is rounded to a whole scrap, and rounding does
-    // not commute with multiplication. The difference is at most one scrap, and
-    // the order is fixed so the rounding happens once — on the number the HUD
-    // shows — instead of being multiplied up by the plan.
+    // `shiftBalance`: the backpack and the ore are cut down to whole scrap, and
+    // that does not commute with multiplication. The difference is at most one
+    // scrap per multiplication, and the order is fixed so it happens once — on
+    // the numbers the HUD shows — instead of being multiplied up by the plan.
     const cargo = profileWith({ fiveYearPlan: 2, upgrades: { [CARGO]: 4 } });
     const planFirst = shiftBalance(balance, cargo);
     const upgradesFirst = planBalance(effectiveBalance(balance, cargo.upgrades), cargo.fiveYearPlan);
@@ -1388,6 +1388,139 @@ describe('shiftBalance', () => {
         Math.floor(balance.cargo.capacity_base / (balance.layers[index]?.yield ?? 1)),
       );
     });
+  });
+});
+
+/**
+ * `prestige.yield_mult_per_tier` values the sweep below walks. The one in
+ * balance.json is whole today, and whole is the friendly case: it leaves every
+ * yield and every cargo an integer, so nothing downstream has anything to round
+ * away. The file says «Правь смело» and the owner does, so the fractional shapes
+ * are here by name — a half, a quarter, and a tenth, which is the mean one.
+ */
+const SWEPT_YIELD_MULTS: readonly number[] = [1.1, 1.25, 1.5, 2, 2.5, 3, 4];
+
+/** The same balance with another five-year multiplier. Nothing else moves. */
+function withYieldMult(mult: number): Balance {
+  return { ...balance, prestige: { ...balance.prestige, yield_mult_per_tier: mult } };
+}
+
+describe('a fractional five-year multiplier', () => {
+  it('leaves the backpack and the ore whole, and whole together', () => {
+    // The bug this guards: the ore was rounded to the nearest whole scrap and
+    // the backpack was left fractional, which is a rounding of the quotient
+    // itself. `round(96 · 1.1) = 106` of ore against `96 · 1.1 = 105.6` of
+    // backpack — the richest cell no longer fits an empty cargo, the drill never
+    // starts it, and the reward for reaching the bottom is a mine that cannot be
+    // dug. Both numbers are cut to whole scrap in the same place now, and in the
+    // same direction.
+    for (const mult of SWEPT_YIELD_MULTS) {
+      for (let plan = 1; plan <= 6; plan += 1) {
+        for (let level = 0; level <= 32; level += 1) {
+          const bent = effectiveBalance(planBalance(withYieldMult(mult), plan), { [CARGO]: level });
+          const where = `множитель ${mult}, пятилетка ${plan}, карго ${level}`;
+          expect(Number.isInteger(bent.cargo.capacity_base), where).toBe(true);
+          for (const layer of bent.layers) {
+            expect(Number.isInteger(layer.yield), `${where}, ${layer.id}`).toBe(true);
+          }
+          expect(bent.cargo.capacity_base, where).toBeGreaterThanOrEqual(
+            Math.max(...bent.layers.map((layer) => layer.yield)),
+          );
+        }
+      }
+    }
+  });
+
+  it('keeps every trip the length the first plan had', () => {
+    // §2.6 hangs off `floor(capacity / yield)`: a trip is that many cells and
+    // two decisions, and moving it by one moves the silence by half a minute in
+    // the first layer. Flooring both sides is what holds it — rounding both to
+    // the nearest fixes the dead mine above but still moves dozens of these.
+    const cellsAtZero = balance.layers.map((layer) =>
+      Math.floor(balance.cargo.capacity_base / layer.yield),
+    );
+    for (const mult of SWEPT_YIELD_MULTS) {
+      for (let plan = 1; plan <= 6; plan += 1) {
+        for (let level = 0; level <= 32; level += 1) {
+          const bent = effectiveBalance(planBalance(withYieldMult(mult), plan), { [CARGO]: level });
+          bent.layers.forEach((layer, index) => {
+            expect(
+              Math.floor(bent.cargo.capacity_base / layer.yield),
+              `множитель ${mult}, пятилетка ${plan}, карго ${level}, ${layer.id}`,
+            ).toBe(cellsAtZero[index]);
+          });
+        }
+      }
+    }
+  });
+
+  it('leaves a mine the drill actually opens, at 1.1 with nothing bought', () => {
+    // The live version of the same claim, on the worst multiplier of the set and
+    // in the plan the first win hands out. Arithmetic that multiplies two numbers
+    // cannot see this; a drill that never opens a cell can.
+    for (const mult of [1.1, 2.5]) {
+      for (const plan of [2, 3]) {
+        for (let index = 0; index < balance.layers.length; index += 1) {
+          expect(
+            dugOneCell(plan, index, withYieldMult(mult)),
+            `множитель ${mult}, пятилетка ${plan}, слой ${index + 1}`,
+          ).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+});
+
+describe('balanceProblems', () => {
+  it('finds nothing wrong with the balance the game ships', () => {
+    expect(balanceProblems(balance)).toEqual([]);
+  });
+
+  it('lets a fractional five-year multiplier through: it is a taste, not a wall', () => {
+    // The rounding rule of `effectiveBalance` makes 1.1 playable, and the sweep
+    // above proves it. A validator that rejected it would be taking a number away
+    // from the owner for no reason left.
+    for (const mult of SWEPT_YIELD_MULTS) {
+      expect(balanceProblems(withYieldMult(mult)), `множитель ${mult}`).toEqual([]);
+    }
+  });
+
+  it('rejects a five-year plan that pays worse than the one before it', () => {
+    for (const mult of [0.9, 0, -2]) {
+      const problems = balanceProblems(withYieldMult(mult));
+      expect(problems.length, `множитель ${mult}`).toBe(1);
+      expect(problems[0]).toContain('yield_mult_per_tier');
+    }
+  });
+
+  it('rejects a multiplier that is not a number at all', () => {
+    const broken = { ...balance, prestige: { ...balance.prestige, wave_hp_mult_per_tier: NaN } };
+    expect(balanceProblems(broken)[0]).toContain('wave_hp_mult_per_tier');
+    const missing = { ...balance, prestige: {} } as unknown as Balance;
+    expect(balanceProblems(missing)).toHaveLength(2);
+  });
+
+  it('rejects a layer whose cell cannot fit an empty cargo', () => {
+    // The one hard wall of §5 that no code downstream can rescue: a cell richer
+    // than the whole backpack is never started, so the drill blocks for ever.
+    const rich: Balance = {
+      ...balance,
+      layers: balance.layers.map((layer, index) =>
+        index === balance.layers.length - 1
+          ? { ...layer, yield: balance.cargo.capacity_base + 1 }
+          : layer,
+      ),
+    };
+    const problems = balanceProblems(rich);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('не влезет в пустое карго');
+  });
+
+  it('rejects a cargo that is not a positive number', () => {
+    for (const capacity of [0, -1, Number.NaN]) {
+      const broken: Balance = { ...balance, cargo: { ...balance.cargo, capacity_base: capacity } };
+      expect(balanceProblems(broken), `карго ${capacity}`).toHaveLength(1);
+    }
   });
 });
 
