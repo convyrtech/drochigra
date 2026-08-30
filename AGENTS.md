@@ -81,6 +81,14 @@ env -u ALL_PROXY -u all_proxy -u HTTP_PROXY -u http_proxy -u HTTPS_PROXY -u http
 Фоновый `vite preview` гасить **по PID**. `pkill -f vite` в этом окружении убивает вызывающий
 шелл вместе с сервером.
 
+`git push` через тот же прокси падает: SSH обрывается на чужом IP, HTTPS — на
+`gnutls_handshake() failed`. При этом `gh api` и `curl` работают, так что выглядит
+как отсутствие прав, а не как сеть. Рабочая формула та же:
+
+```
+env -u ALL_PROXY -u all_proxy -u HTTPS_PROXY -u https_proxy git push origin main
+```
+
 Скриншоты складывать в `.playwright/` — она в `.gitignore` и в коммит не попадает.
 
 ## Язык
