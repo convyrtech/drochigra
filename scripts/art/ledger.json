@@ -788,5 +788,773 @@
       "type": "generations",
       "generations": 1
     }
+  },
+  {
+    "id": "panel-plate",
+    "at": "2026-08-30T09:07:56.338Z",
+    "seconds": 28.7,
+    "seed": 19886,
+    "size": {
+      "width": 336,
+      "height": 44
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "riveted steel plate stretching the entire width of the frame from the far left edge to the far right edge, flat grey sheet metal, a row of round bolt heads along the top edge and another row along the bottom edge, a thin dark shadow line under the top edge, plain empty middle with only faint scratches and a little rust, the plate touches all four edges, no empty space at the left or right, no objects, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "panel-plate",
+    "at": "2026-08-30T09:09:14.571Z",
+    "seconds": 23.4,
+    "seed": 19906,
+    "size": {
+      "width": 336,
+      "height": 44
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "riveted steel plate stretching the entire width of the frame from the far left edge to the far right edge, flat even grey sheet metal, one row of round bolt heads along the top edge and one along the bottom edge, a thin rust line under the top edge and above the bottom edge, the middle of the plate is completely plain evenly lit grey with no marks on it, the plate touches all four edges, no empty space at the left or right, no white patches, no snow, no bright highlights, no objects, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "panel-plate",
+    "at": "2026-08-30T09:09:57.763Z",
+    "seconds": 14.2,
+    "seed": 19916,
+    "size": {
+      "width": 336,
+      "height": 44
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "a plain flat sheet of grey steel filling the whole frame from the far left edge to the far right edge, one narrow dark navy border strip along the top edge and one along the bottom edge with small round rivets set in them, the entire middle of the plate is one flat even grey with nothing on it at all, uniform lighting, no rust, no stains, no snow, no white patches, no scratches, no objects, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "panel-plate",
+    "at": "2026-08-30T09:10:29.395Z",
+    "seconds": 17.5,
+    "seed": 19926,
+    "size": {
+      "width": 336,
+      "height": 44
+    },
+    "palette": "plate",
+    "colors": [
+      "#8A94A6",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#F2C14E",
+      "#C0392B"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "a plain flat sheet of grey steel filling the whole frame from the far left edge to the far right edge, one narrow dark navy border strip along the top edge and one along the bottom edge with small round rivets set in them, the entire middle of the plate is one flat even grey with nothing on it at all, uniform lighting, no rust, no stains, no snow, no white patches, no scratches, no objects, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "base-sky",
+    "at": "2026-08-30T09:11:02.515Z",
+    "seconds": 16.7,
+    "seed": 19885,
+    "size": {
+      "width": 180,
+      "height": 320
+    },
+    "palette": "night-sky",
+    "colors": [
+      "#0A0A0F",
+      "#0E2A44",
+      "#35608C",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#E8EDF2"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "tall vertical view of an antarctic research station standing in polar night, low riveted domes and radio masts along a snow ridge across the lower third, deep blue sky above them filled with faint mint aurora curtains and small cold stars, dark empty snow field across the bottom edge, seen from far away, no foreground objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "button-face",
+    "at": "2026-08-30T09:11:19.174Z",
+    "seconds": 15.8,
+    "seed": 19887,
+    "size": {
+      "width": 64,
+      "height": 32
+    },
+    "palette": "plate",
+    "colors": [
+      "#8A94A6",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#F2C14E",
+      "#C0392B"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "seamless tileable texture of a pressed steel button plate, flat grey sheet metal covered edge to edge in an even scatter of shallow pressed dimples and fine scratches, uniform flat lighting, the texture reaches all four edges, no border, no bevel, no rim, no objects, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "base-sky",
+    "at": "2026-08-30T09:12:30.129Z",
+    "seconds": 25,
+    "seed": 19905,
+    "size": {
+      "width": 180,
+      "height": 320
+    },
+    "palette": "night-sky",
+    "colors": [
+      "#0A0A0F",
+      "#0E2A44",
+      "#35608C",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#E8EDF2"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "antarctic polar night seen from far away, almost the whole frame is very dark near black navy, a low snow ridge carrying the small silhouettes of station domes and radio masts sits across the lower third, above it only two or three thin faint mint aurora threads and a scatter of tiny cold stars, no large bright areas, no big green field, dark and quiet, no foreground objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "button-face",
+    "at": "2026-08-30T09:12:55.119Z",
+    "seconds": 63.8,
+    "seed": 19907,
+    "size": {
+      "width": 64,
+      "height": 64
+    },
+    "palette": "plate",
+    "colors": [
+      "#8A94A6",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#F2C14E",
+      "#C0392B"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of pressed steel plating, flat grey sheet metal with an even pattern of shallow round dimples and faint scratches, flat front-facing wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "button-face",
+    "at": "2026-08-30T09:14:40.252Z",
+    "seconds": 19.6,
+    "seed": 19917,
+    "size": {
+      "width": 64,
+      "height": 64
+    },
+    "palette": "steel",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#0A0A0F"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of a riveted steel bulkhead, grey steel plate packed with small round rivet heads and fine scratches, flat front-facing wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "button-face",
+    "at": "2026-08-30T09:16:08.786Z",
+    "seconds": 15.7,
+    "seed": 19927,
+    "size": {
+      "width": 64,
+      "height": 64
+    },
+    "palette": "steel",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#0A0A0F"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "extreme close up of a brushed steel surface, flat grey metal filling the entire frame, fine horizontal brush lines and a light even speckle of tiny dents all over it, completely uniform everywhere, edge to edge texture, no border, no frame, no rivets, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "button-face",
+    "at": "2026-08-30T09:17:09.273Z",
+    "seconds": 28,
+    "seed": 19937,
+    "size": {
+      "width": 64,
+      "height": 64
+    },
+    "palette": "steel",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#0A0A0F"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of a steel mine wall, grey steel plating packed with small round rivet heads and fine scratches spread evenly over the whole tile, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-drill",
+    "at": "2026-08-30T09:18:50.932Z",
+    "seconds": 17.1,
+    "seed": 19888,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "single rusted conical mining drill bit with a short yellow steel collar behind it, pointing right, side view, whole object centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-turret",
+    "at": "2026-08-30T09:19:08.051Z",
+    "seconds": 23.3,
+    "seed": 19889,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "small armoured defence turret cupola on a round base with a short twin cannon aimed up and to the right, side view, whole turret centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-dome",
+    "at": "2026-08-30T09:19:31.377Z",
+    "seconds": 13.3,
+    "seed": 19890,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "wide low armoured station dome, a half circle shell of riveted steel standing on a short snow bank, side view, whole dome centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-cargo",
+    "at": "2026-08-30T09:19:44.638Z",
+    "seconds": 18.7,
+    "seed": 19891,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "mine cargo skip, an open topped steel box wagon heaped with ore riding on two small wheels, facing right, side view, whole wagon centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-hangar",
+    "at": "2026-08-30T09:20:03.298Z",
+    "seconds": 21.1,
+    "seed": 19892,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "small barrel vaulted corrugated steel hangar shed with one wide closed door in its front wall, side view, whole building centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-salvo",
+    "at": "2026-08-30T09:20:24.374Z",
+    "seconds": 22.1,
+    "seed": 19893,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "three stubby rockets flying up and to the right in a tight group with short flame trails behind them, side view, whole group centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-elevator",
+    "at": "2026-08-30T09:20:46.501Z",
+    "seconds": 20.7,
+    "seed": 19894,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "mine lift cage, a square steel cage hanging on one cable from a pulley wheel above it, side view, whole cage centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-conveyor",
+    "at": "2026-08-30T09:21:07.225Z",
+    "seconds": 19.9,
+    "seed": 19895,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "short conveyor belt on two round rollers slanting up to the right and carrying three lumps of ore, side view, whole belt centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "crystal",
+    "at": "2026-08-30T09:22:12.616Z",
+    "seconds": 23.7,
+    "seed": 19882,
+    "size": {
+      "width": 32,
+      "height": 32
+    },
+    "palette": "crystal",
+    "colors": [
+      "#06222E",
+      "#0B3A4A",
+      "#12617A",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#E8EDF2"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "single glowing abyss crystal shard, faceted pale mint white gem on a small dark rock base, cold cyan inner light, whole item centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "paper",
+    "at": "2026-08-30T09:22:36.274Z",
+    "seconds": 22.3,
+    "seed": 19896,
+    "size": {
+      "width": 148,
+      "height": 244
+    },
+    "palette": "surface",
+    "colors": [
+      "#E8EDF2",
+      "#8A94A6",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "sheet of old yellowed office paper filling the whole frame from edge to edge, a faint pale ruled grid over all of it, one horizontal and one vertical fold crease, worn stained corners and a frayed edge, flat blank sheet, no writing, no text, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "stamp",
+    "at": "2026-08-30T09:22:58.545Z",
+    "seconds": 17.4,
+    "seed": 19897,
+    "size": {
+      "width": 88,
+      "height": 88
+    },
+    "palette": "surface",
+    "colors": [
+      "#E8EDF2",
+      "#8A94A6",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "round rubber stamp imprint in worn red ink, a thick broken ring with a small five pointed star in the middle and short illegible ink marks between the star and the ring, patchy uneven ink, whole imprint centred, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "hangar-pile",
+    "at": "2026-08-30T09:23:15.949Z",
+    "seconds": 33.8,
+    "seed": 19898,
+    "size": {
+      "width": 120,
+      "height": 120
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "heap of scrap metal, a wide low pile of bent rusted steel plates, pipes, bolts and one broken gear stacked together on the ground, whole pile centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "emblem",
+    "at": "2026-08-30T09:23:49.770Z",
+    "seconds": 21.9,
+    "seed": 19899,
+    "size": {
+      "width": 64,
+      "height": 64
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "emblem badge of a polar mining station, a round steel medallion with a red five pointed star above a crossed pickaxe and hammer, thin amber rim, whole badge centred, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
   }
 ]

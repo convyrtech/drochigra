@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { ART, hasArt } from '../game/artTextures.js';
+import { faceButton } from './plate.js';
 import { COLORS, cssColor, FONT_FAMILY, hudButtonHitZone, VIEW } from '../game/layout.js';
 import {
   domeHpShare,
@@ -49,7 +50,8 @@ export interface HudOptions {
 type PinnedPart =
   | Phaser.GameObjects.Rectangle
   | Phaser.GameObjects.Text
-  | Phaser.GameObjects.Image;
+  | Phaser.GameObjects.Image
+  | Phaser.GameObjects.TileSprite;
 
 export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
   const { width, domeHeight, depth, onBank, onSalvo } = options;
@@ -310,6 +312,10 @@ function createButton(scene: Phaser.Scene, options: ButtonOptions): Button {
     .rectangle(x, hud.buttonTop, buttonWidth, hud.buttonHeight, COLORS.button)
     .setOrigin(0, 0);
 
+  // The same steel as every other button of the game, over the fill that shows
+  // the salvo cooling down — the cooldown still reads through it.
+  const face = faceButton(scene, x, hud.buttonTop, buttonWidth, hud.buttonHeight);
+
   const label = scene.add
     .text(x + buttonWidth / 2, hud.buttonTop + hud.buttonHeight / 2, text, {
       fontFamily: FONT_FAMILY,
@@ -319,7 +325,7 @@ function createButton(scene: Phaser.Scene, options: ButtonOptions): Button {
     .setOrigin(0.5);
 
   return {
-    parts: [back, fill, label],
+    parts: face ? [back, fill, face, label] : [back, fill, label],
     label,
     setFill(share: number, ready: boolean): void {
       fill.width = buttonWidth * Math.min(1, Math.max(0, share));

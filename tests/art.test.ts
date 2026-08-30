@@ -57,7 +57,28 @@ const usedIds = [
   ART.crystal,
   ART.scrap,
   ART.sky,
+  ART.baseSky,
+  ART.panelPlate,
+  ART.buttonFace,
+  ...Object.values(ART.upgradeIconById),
+  ART.paper,
+  ART.stamp,
+  ART.hangarPile,
+  ART.emblem,
 ];
+
+/**
+ * The sprites that are **tiled** rather than drawn at a size, and so have no
+ * entry in `drawnSize` at all.
+ *
+ * `button-face` is the whole of this list and the reason it exists. The game
+ * faces nine differently sized buttons with it — a 90-pixel checkpoint chip and
+ * the 672-pixel «НАЧАТЬ СМЕНУ» among them — and no single picture can be
+ * stretched to all nine without becoming a different material on each. Laid as
+ * a tile it is always one texture pixel per design pixel, which is the whole
+ * point of the whole-multiple rule below, satisfied by construction.
+ */
+const tiledIds = new Set<string>([ART.buttonFace]);
 
 const manifestIds = manifest.assets.map((asset) => asset.id);
 
@@ -132,6 +153,24 @@ const drawnSize: Record<string, { width: number; height: number }> = {
   crystal: { width: VIEW.hud.statIconSize, height: VIEW.hud.statIconSize },
   scrap: { width: VIEW.hud.statIconSize, height: VIEW.hud.statIconSize },
   sky: { width: VIEW.width, height: domeZoneHeight() },
+  // The screens between the shifts.
+  'base-sky': { width: VIEW.width, height: VIEW.height },
+  'panel-plate': {
+    width: VIEW.width - VIEW.base.margin * 2,
+    height: VIEW.base.rowHeight,
+  },
+  ...Object.fromEntries(
+    Object.values(ART.upgradeIconById).map((id) => [
+      id,
+      { width: VIEW.base.rowIconSize, height: VIEW.base.rowIconSize },
+    ]),
+  ),
+  // One blank, two screens: the report and the victory panel are the same box
+  // on purpose, and the test below holds them to it.
+  paper: { width: VIEW.report.panelWidth, height: VIEW.report.panelHeight },
+  stamp: { width: VIEW.report.stampSize, height: VIEW.report.stampSize },
+  'hangar-pile': { width: VIEW.hangar.pileSize, height: VIEW.hangar.pileSize },
+  emblem: { width: VIEW.report.emblemSize, height: VIEW.report.emblemSize },
 };
 
 /**
@@ -157,6 +196,26 @@ describe('the sprite manifest and the game agree on what exists', () => {
 
   it('has one rock face per layer of the balance', () => {
     expect(ART.rockByLayer).toHaveLength(balance.layers.length);
+  });
+
+  it('has a branch icon per upgrade of the balance, and no icon for a branch that is gone', () => {
+    // Eight rows, eight machines. A ninth icon would be paid for and never
+    // drawn; a missing one turns the whole list back into words, because the
+    // base draws the icons all or none (`VIEW.base.rowIconSize`).
+    expect(Object.keys(ART.upgradeIconById).sort()).toEqual(
+      Object.keys(balance.upgrades.items).sort(),
+    );
+  });
+
+  it('draws the same blank on the report and on the closed plan, at the same size', () => {
+    // `paper` is one sprite and a sprite has one drawn size: if these two boxes
+    // ever drift apart, one of the two screens is resampling the sheet.
+    expect(VIEW.victory.panelWidth).toBe(VIEW.report.panelWidth);
+    expect(VIEW.victory.panelHeight).toBe(VIEW.report.panelHeight);
+    // Same for the badge and the stamp, which both screens also share.
+    expect(VIEW.victory.emblemSize).toBe(VIEW.report.emblemSize);
+    expect(VIEW.base.emblemSize).toBe(VIEW.report.emblemSize);
+    expect(VIEW.victory.stampSize).toBe(VIEW.report.stampSize);
   });
 
   it('has a creature per enemy of the balance', () => {
@@ -206,8 +265,26 @@ describe('the manifest itself', () => {
     }
   });
 
+  it('tiles the button face, and tiles it from a power-of-two square', () => {
+    // A tile is only ever drawn one texture pixel to one design pixel — but only
+    // if Phaser can wrap the texture itself. Give TileSprite a non-power-of-two
+    // frame and it redraws it, **scaled**, into a POT canvas: the whole reason
+    // for tiling instead of stretching is gone, silently.
+    for (const id of tiledIds) {
+      const asset = manifest.assets.find((candidate) => candidate.id === id);
+      expect(asset, `${id} is tiled but not in the manifest`).toBeDefined();
+      for (const side of [asset!.size.width, asset!.size.height]) {
+        expect(Number.isInteger(Math.log2(side)), `${id}: ${side} is not a power of two`).toBe(true);
+      }
+      expect(drawnSize[id], `${id} is tiled, so it has no one drawn size`).toBeUndefined();
+    }
+  });
+
   it('generates every sprite at the size it is drawn at, or a whole fraction of it', () => {
     for (const asset of manifest.assets) {
+      if (tiledIds.has(asset.id)) {
+        continue;
+      }
       const drawn = drawnSize[asset.id];
       expect(drawn, `${asset.id} is generated but its drawn size is unknown`).toBeDefined();
       if (!drawn) {
@@ -234,6 +311,16 @@ describe('the manifest itself', () => {
       expect(asset.size.width, asset.id).toBeLessThanOrEqual(400);
       expect(asset.size.height, asset.id).toBeGreaterThanOrEqual(16);
       expect(asset.size.height, asset.id).toBeLessThanOrEqual(400);
+      // Learned from the API at the cost of one round trip: a canvas whose
+      // sides are not both divisible by four comes back «422 Canvas width and
+      // height must both be divisible by 4» for a 150×246 canvas. Only asked of
+      // what has not been bought yet — `dome`, `enemy-aberration` and
+      // `enemy-moth` were generated before the API said so and are on disk, and
+      // resizing a sprite that already exists would mean paying for it twice.
+      if (!filesOnDisk.has(asset.id)) {
+        expect(asset.size.width % 4, `${asset.id}: width not divisible by 4`).toBe(0);
+        expect(asset.size.height % 4, `${asset.id}: height not divisible by 4`).toBe(0);
+      }
       // A repeated seed would quietly make two assets the same picture.
       expect(seeds.has(asset.seed), `${asset.id}: seed ${asset.seed} is already used`).toBe(false);
       seeds.add(asset.seed);

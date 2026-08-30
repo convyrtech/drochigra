@@ -1,5 +1,5 @@
 {
-  "_comment": "Sprite sheet of ВОСТОК-9. One entry per PNG in content/art/. Ids are file names without the extension; the game looks them up through content/art/index.json, which generate.mjs writes. Order is priority order — the generator walks the list top to bottom and stops cleanly when the key runs out of generations, so the cells (70% of the screen) are always paid for first. Every `size` here is the size the sprite is DRAWN at in design pixels, or an exact whole fraction of it: NEAREST scaling by 1.203 duplicates rows unevenly and scaling by 0.875 throws four rows out of thirty-two. tests/art.test.ts holds every one of those sums against src/game/layout.ts.",
+  "_comment": "Sprite sheet of ВОСТОК-9. One entry per PNG in content/art/. Ids are file names without the extension; the game looks them up through content/art/index.json, which generate.mjs writes. Order is priority order — the generator walks the list top to bottom and stops cleanly when the key runs out of generations, so the cells (70% of the screen) are always paid for first. Every `size` here is the size the sprite is DRAWN at in design pixels, or an exact whole fraction of it: NEAREST scaling by 1.203 duplicates rows unevenly and scaling by 0.875 throws four rows out of thirty-two. The one exception is `button-face`, which is not drawn at a size at all — it is TILED across nine differently sized buttons, one texture pixel to one design pixel, which is why its own size must stay a power of two. Sides must also be divisible by four: the API answers «422 Canvas width and height must both be divisible by 4» otherwise. tests/art.test.ts holds every one of those sums against src/game/layout.ts.",
   "style": {
     "_comment": "One style for every asset: a mixed set of sprites looks worse than honest rectangles. Do not vary these per asset.",
     "outline": "selective outline",
@@ -9,7 +9,7 @@
     "text_guidance_scale": 8
   },
   "palettes": {
-    "_comment": "GDD_VOSTOK9.md §16, one group per layer plus the surface, the machines and the polar night. Every request sends the group as a forced palette (color_image), which is what keeps the set together — and which is why a prompt may never ask for a colour its own group does not hold: the generator physically cannot paint it. tests/art.test.ts checks every colour against §16.",
+    "_comment": "GDD_VOSTOK9.md §16, one group per layer plus the surface, the machines and the polar night. Every request sends the group as a forced palette (color_image), which is what keeps the set together — and which is why a prompt may never ask for a colour its own group does not hold: the generator physically cannot paint it. The other half of that lever is what a group leaves OUT: `plate` and `steel` have no near-white in them because with #E8EDF2 on the list the generator painted a specular cloud across the middle of every flat plate, and the middle of a plate is where the interface writes. tests/art.test.ts checks every colour against §16.",
     "surface": [
       "#E8EDF2",
       "#8A94A6",
@@ -50,6 +50,14 @@
       "#0E2A44",
       "#B8FFE8"
     ],
+    "crystal": [
+      "#06222E",
+      "#0B3A4A",
+      "#12617A",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#E8EDF2"
+    ],
     "machine": [
       "#8A94A6",
       "#E8EDF2",
@@ -57,6 +65,22 @@
       "#C0392B",
       "#F2C14E",
       "#0E2A44"
+    ],
+    "plate": [
+      "#8A94A6",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#F2C14E",
+      "#C0392B"
+    ],
+    "steel": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#0A0A0F"
     ],
     "abyss": [
       "#0A0A0F",
@@ -206,14 +230,14 @@
     {
       "id": "crystal",
       "group": "loot",
-      "palette": "l3",
+      "palette": "crystal",
       "size": {
         "width": 32,
         "height": 32
       },
       "seed": 19882,
       "no_background": true,
-      "prompt": "single glowing abyss crystal shard, faceted amber gem on a small dark rock base, bright inner light, whole item centred"
+      "prompt": "single glowing abyss crystal shard, faceted pale mint white gem on a small dark rock base, cold cyan inner light, whole item centred"
     },
     {
       "id": "scrap",
@@ -237,6 +261,182 @@
       },
       "seed": 19884,
       "prompt": "antarctic polar night sky over a distant snow horizon, deep blue gradient with faint green aurora curtains and small cold stars, far away silhouettes of station masts along the bottom edge, empty middle, no foreground objects"
+    },
+    {
+      "id": "base-sky",
+      "group": "base",
+      "palette": "night-sky",
+      "size": {
+        "width": 180,
+        "height": 320
+      },
+      "seed": 19905,
+      "prompt": "antarctic polar night seen from far away, almost the whole frame is very dark near black navy, a low snow ridge carrying the small silhouettes of station domes and radio masts sits across the lower third, above it only two or three thin faint mint aurora threads and a scatter of tiny cold stars, no large bright areas, no big green field, dark and quiet, no foreground objects"
+    },
+    {
+      "id": "panel-plate",
+      "group": "base",
+      "palette": "plate",
+      "size": {
+        "width": 336,
+        "height": 44
+      },
+      "seed": 19926,
+      "prompt": "a plain flat sheet of grey steel filling the whole frame from the far left edge to the far right edge, one narrow dark navy border strip along the top edge and one along the bottom edge with small round rivets set in them, the entire middle of the plate is one flat even grey with nothing on it at all, uniform lighting, no rust, no stains, no snow, no white patches, no scratches, no objects, no text"
+    },
+    {
+      "id": "button-face",
+      "group": "base",
+      "palette": "steel",
+      "size": {
+        "width": 64,
+        "height": 64
+      },
+      "seed": 19937,
+      "prompt": "square tile of a steel mine wall, grey steel plating packed with small round rivet heads and fine scratches spread evenly over the whole tile, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects"
+    },
+    {
+      "id": "icon-drill",
+      "group": "icons",
+      "palette": "machine",
+      "size": {
+        "width": 48,
+        "height": 48
+      },
+      "seed": 19888,
+      "no_background": true,
+      "prompt": "single rusted conical mining drill bit with a short yellow steel collar behind it, pointing right, side view, whole object centred"
+    },
+    {
+      "id": "icon-turret",
+      "group": "icons",
+      "palette": "machine",
+      "size": {
+        "width": 48,
+        "height": 48
+      },
+      "seed": 19889,
+      "no_background": true,
+      "prompt": "small armoured defence turret cupola on a round base with a short twin cannon aimed up and to the right, side view, whole turret centred"
+    },
+    {
+      "id": "icon-dome",
+      "group": "icons",
+      "palette": "machine",
+      "size": {
+        "width": 48,
+        "height": 48
+      },
+      "seed": 19890,
+      "no_background": true,
+      "prompt": "wide low armoured station dome, a half circle shell of riveted steel standing on a short snow bank, side view, whole dome centred"
+    },
+    {
+      "id": "icon-cargo",
+      "group": "icons",
+      "palette": "machine",
+      "size": {
+        "width": 48,
+        "height": 48
+      },
+      "seed": 19891,
+      "no_background": true,
+      "prompt": "mine cargo skip, an open topped steel box wagon heaped with ore riding on two small wheels, facing right, side view, whole wagon centred"
+    },
+    {
+      "id": "icon-hangar",
+      "group": "icons",
+      "palette": "machine",
+      "size": {
+        "width": 48,
+        "height": 48
+      },
+      "seed": 19892,
+      "no_background": true,
+      "prompt": "small barrel vaulted corrugated steel hangar shed with one wide closed door in its front wall, side view, whole building centred"
+    },
+    {
+      "id": "icon-salvo",
+      "group": "icons",
+      "palette": "machine",
+      "size": {
+        "width": 48,
+        "height": 48
+      },
+      "seed": 19893,
+      "no_background": true,
+      "prompt": "three stubby rockets flying up and to the right in a tight group with short flame trails behind them, side view, whole group centred"
+    },
+    {
+      "id": "icon-elevator",
+      "group": "icons",
+      "palette": "machine",
+      "size": {
+        "width": 48,
+        "height": 48
+      },
+      "seed": 19894,
+      "no_background": true,
+      "prompt": "mine lift cage, a square steel cage hanging on one cable from a pulley wheel above it, side view, whole cage centred"
+    },
+    {
+      "id": "icon-conveyor",
+      "group": "icons",
+      "palette": "machine",
+      "size": {
+        "width": 48,
+        "height": 48
+      },
+      "seed": 19895,
+      "no_background": true,
+      "prompt": "short conveyor belt on two round rollers slanting up to the right and carrying three lumps of ore, side view, whole belt centred"
+    },
+    {
+      "id": "paper",
+      "group": "paper",
+      "palette": "surface",
+      "size": {
+        "width": 148,
+        "height": 244
+      },
+      "seed": 19896,
+      "prompt": "sheet of old yellowed office paper filling the whole frame from edge to edge, a faint pale ruled grid over all of it, one horizontal and one vertical fold crease, worn stained corners and a frayed edge, flat blank sheet, no writing, no text, no objects"
+    },
+    {
+      "id": "stamp",
+      "group": "paper",
+      "palette": "surface",
+      "size": {
+        "width": 88,
+        "height": 88
+      },
+      "seed": 19897,
+      "no_background": true,
+      "prompt": "round rubber stamp imprint in worn red ink, a thick broken ring with a small five pointed star in the middle and short illegible ink marks between the star and the ring, patchy uneven ink, whole imprint centred, no text"
+    },
+    {
+      "id": "hangar-pile",
+      "group": "paper",
+      "palette": "machine",
+      "size": {
+        "width": 120,
+        "height": 120
+      },
+      "seed": 19898,
+      "no_background": true,
+      "prompt": "heap of scrap metal, a wide low pile of bent rusted steel plates, pipes, bolts and one broken gear stacked together on the ground, whole pile centred"
+    },
+    {
+      "id": "emblem",
+      "group": "paper",
+      "palette": "machine",
+      "size": {
+        "width": 64,
+        "height": 64
+      },
+      "seed": 19899,
+      "no_background": true,
+      "prompt": "emblem badge of a polar mining station, a round steel medallion with a red five pointed star above a crossed pickaxe and hammer, thin amber rim, whole badge centred, no text"
     }
   ]
 }

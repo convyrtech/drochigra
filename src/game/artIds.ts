@@ -47,6 +47,45 @@ export const ART = {
   scrap: 'scrap',
   /** Backdrop of the dome zone: the polar night behind the station. */
   sky: 'sky',
+
+  // The screens between the shifts. The base is the first thing anyone ever
+  // sees of this game, and until these existed it was eight grey oblongs.
+
+  /** Backdrop of the base: the same polar night, from outside the station. */
+  baseSky: 'base-sky',
+  /** The riveted plate one upgrade branch is written on. */
+  panelPlate: 'panel-plate',
+  /**
+   * The steel every button of the game is faced with — «НАЧАТЬ СМЕНУ», the
+   * prices, the checkpoint chips, «СДАТЬ», «ЗАЛП», «К ЗАБОЮ», «НА БАЗУ» and the
+   * one that closes a five-year plan. One sprite, tiled, so a 90-pixel chip and
+   * a 672-pixel button are cut from the same sheet (`VIEW.plate`).
+   */
+  buttonFace: 'button-face',
+  /**
+   * Keys of `balance.upgrades.items` to their branch icons. Eight machines
+   * instead of eight lines of text — the thing that turns the upgrade list into
+   * a machine hall.
+   */
+  upgradeIconById: {
+    drill: 'icon-drill',
+    turret: 'icon-turret',
+    dome: 'icon-dome',
+    cargo: 'icon-cargo',
+    hangar: 'icon-hangar',
+    salvo: 'icon-salvo',
+    elevator: 'icon-elevator',
+    conveyor: 'icon-conveyor',
+  } as Record<string, string>,
+
+  /** The station blank the shift report and the closed plan are printed on. */
+  paper: 'paper',
+  /** «Принято к учёту», in worn red ink. */
+  stamp: 'stamp',
+  /** What the hangar made while the game was closed. */
+  hangarPile: 'hangar-pile',
+  /** The station badge: the head of the base screen and of the blank. */
+  emblem: 'emblem',
 } as const;
 
 /** Sprite ids that are actually on disk, in the order the index lists them. */

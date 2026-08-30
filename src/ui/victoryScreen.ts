@@ -1,5 +1,13 @@
 import Phaser from 'phaser';
-import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
+import { ART } from '../game/artTextures.js';
+import {
+  COLORS,
+  cssColor,
+  FONT_FAMILY,
+  PAPER_INK,
+  SCREEN_INK,
+  VIEW,
+} from '../game/layout.js';
 import { SFX } from '../game/sfx.js';
 import type { Balance } from '../sim/balance.js';
 import {
@@ -10,6 +18,7 @@ import {
   walletAmount,
   type Profile,
 } from '../sim/progress.js';
+import { artImage, artImageCentred, faceButtonRect } from './plate.js';
 import { makeTapTarget } from './tapTarget.js';
 
 /**
@@ -21,8 +30,11 @@ import { makeTapTarget } from './tapTarget.js';
  * changes: the waves get tougher, the ore gets richer, everything bought stays
  * and the depth starts from zero.
  *
- * Same station paper as the report (src/ui/shiftReport.ts): a header, the figure
- * the whole thing is about, the closed plan in ruled rows, and one wide button.
+ * Same station paper as the report (src/ui/shiftReport.ts) — literally the same
+ * sprite at the same size, under the same printed masthead, with the same badge
+ * and the same rubber stamp — so the two screens read as two pages of one file.
+ * The ink follows the ground the same way it does there: `PAPER_INK` on the
+ * blank, the old light colours on the dark panel when there is no blank.
  * Every part is pinned with scrollFactor 0 and put on one depth.
  */
 export interface VictoryScreenOptions {
@@ -44,19 +56,49 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
 
   const panelX = (width - box.panelWidth) / 2;
   const panelY = (height - box.panelHeight) / 2;
-  const panel = scene.add
-    .rectangle(panelX, panelY, box.panelWidth, box.panelHeight, COLORS.panel)
-    .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.buttonEdge);
+  const sheet = artImage(scene, ART.paper, panelX, panelY, box.panelWidth, box.panelHeight);
+  const panel =
+    sheet ??
+    scene.add
+      .rectangle(panelX, panelY, box.panelWidth, box.panelHeight, COLORS.panel)
+      .setOrigin(0, 0)
+      .setStrokeStyle(3, COLORS.buttonEdge);
+  const ink = sheet ? PAPER_INK : SCREEN_INK;
 
-  const title = centered(scene, width / 2, panelY + box.titleTop, 'ГОРОД НАЙДЕН', font.huge, COLORS.crystal);
+  // The printed masthead the title is set in: on the blank it is the only place
+  // light text can stand, and on the dark panel it is simply a band.
+  const headerBand = scene.add
+    .rectangle(panelX, panelY, box.panelWidth, box.headerHeight, COLORS.dome)
+    .setOrigin(0, 0);
+  const headerEdge = scene.add
+    .rectangle(panelX, panelY + box.headerHeight, box.panelWidth, box.ruleHeight, COLORS.buttonEdge)
+    .setOrigin(0, 0);
+  const emblem = artImage(
+    scene,
+    ART.emblem,
+    panelX + box.pad,
+    panelY + box.emblemY,
+    box.emblemSize,
+    box.emblemSize,
+  );
+
+  // Beside the badge, like the report's masthead, and one size down from the
+  // headline it was: at `font.huge` and centred it sat on top of the badge.
+  const title = left(
+    scene,
+    panelX + box.pad + (emblem ? box.emblemSize + box.emblemGap : 0),
+    panelY + box.titleTop,
+    'ГОРОД НАЙДЕН',
+    font.large,
+    COLORS.crystal,
+  );
   const stamp = centered(
     scene,
     width / 2,
     panelY + box.stampTop,
     `ПЯТИЛЕТКА ${profile.fiveYearPlan} ЗАКРЫТА · ДНО БЕЗДНЫ ВСКРЫТО`,
     font.small,
-    COLORS.textDim,
+    ink.dim,
   );
 
   const depthRow = centered(
@@ -65,7 +107,7 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
     panelY + box.depthTop,
     String(balance.shift.grid_depth),
     font.huge,
-    COLORS.buttonEdge,
+    ink.good,
   );
   const depthUnit = centered(
     scene,
@@ -73,7 +115,7 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
     panelY + box.depthUnitTop,
     `РЯД · ${lastLayerName(balance)} ПРОЙДЕН НАСКВОЗЬ`,
     font.tiny,
-    COLORS.textDim,
+    ink.dim,
   );
 
   const rows: readonly (readonly [string, string, number])[] = [
@@ -83,18 +125,18 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
           `Итог · ${resourceName(balance, id).toLowerCase()} в кассе`,
           String(walletAmount(profile, id)),
           // The rare currency is the bright one, the way the report colours it.
-          balance.resources[id]?.premium === true ? COLORS.crystal : COLORS.scrap,
+          balance.resources[id]?.premium === true ? ink.crystal : ink.scrap,
         ] as const,
     ),
-    ['Итог · рекорд смены', String(profile.bestShiftScrap), COLORS.text],
-    ['Итог · куплено уровней', String(totalLevels(balance, profile)), COLORS.text],
+    ['Итог · рекорд смены', String(profile.bestShiftScrap), ink.text],
+    ['Итог · куплено уровней', String(totalLevels(balance, profile)), ink.text],
   ];
 
   const rowParts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [];
   rows.forEach(([label, value, color], index) => {
     const rowY = panelY + box.rowsTop + box.rowHeight * index;
     rowParts.push(
-      left(scene, panelX + box.pad, rowY, label, font.small, COLORS.textDim),
+      left(scene, panelX + box.pad, rowY, label, font.small, ink.dim),
       right(scene, panelX + box.panelWidth - box.pad, rowY, value, font.medium, color),
       scene.add
         .rectangle(
@@ -102,7 +144,7 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
           rowY + box.rowHeight - box.ruleHeight,
           box.panelWidth - box.pad * 2,
           box.ruleHeight,
-          COLORS.dugEdge,
+          ink.rule,
         )
         .setOrigin(0, 0),
     );
@@ -111,10 +153,10 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
   // What the next plan does, in the order the player will feel it. The numbers
   // are the prestige multipliers of balance.json, written out as they are.
   const promises: readonly (readonly [string, number])[] = [
-    [`Волны крепче: здоровье ×${balance.prestige.wave_hp_mult_per_tier}`, COLORS.warning],
-    [`Руда богаче: лом с клетки ×${balance.prestige.yield_mult_per_tier}`, COLORS.scrap],
-    ['Прокачка и касса остаются при тебе', COLORS.text],
-    ['Ствол засыпан: глубина снова с нуля', COLORS.textDim],
+    [`Волны крепче: здоровье ×${balance.prestige.wave_hp_mult_per_tier}`, ink.warn],
+    [`Руда богаче: лом с клетки ×${balance.prestige.yield_mult_per_tier}`, ink.scrap],
+    ['Прокачка и касса остаются при тебе', ink.text],
+    ['Ствол засыпан: глубина снова с нуля', ink.dim],
   ];
   const promiseParts = promises.map(([text, color], index) =>
     left(
@@ -127,12 +169,25 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
     ),
   );
 
+  // The stamp goes where nothing is written: right of the promises, above the
+  // button that starts the next plan.
+  const stampArt = artImageCentred(
+    scene,
+    ART.stamp,
+    panelX + box.panelWidth - box.stampRightPad - box.stampSize / 2,
+    panelY + box.panelHeight - box.stampBottom,
+    box.stampSize,
+    box.stampSize,
+  );
+  stampArt?.setRotation(0.12);
+
   const buttonX = (width - box.buttonWidth) / 2;
   const buttonY = panelY + box.panelHeight - box.buttonBottom - box.buttonHeight;
   const button = scene.add
     .rectangle(buttonX, buttonY, box.buttonWidth, box.buttonHeight, COLORS.button)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.buttonEdge);
+  const buttonFace = faceButtonRect(scene, button);
   const buttonText = centered(
     scene,
     buttonX + box.buttonWidth / 2,
@@ -142,16 +197,26 @@ export function createVictoryScreen(scene: Phaser.Scene, options: VictoryScreenO
     COLORS.text,
   ).setOrigin(0.5, 0.5);
 
-  const parts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [
+  type PinnedPart =
+    | Phaser.GameObjects.Rectangle
+    | Phaser.GameObjects.Text
+    | Phaser.GameObjects.Image
+    | Phaser.GameObjects.TileSprite;
+  const parts: PinnedPart[] = [
     shade,
     panel,
+    headerBand,
+    headerEdge,
+    ...(emblem ? [emblem] : []),
     title,
     stamp,
     depthRow,
     depthUnit,
     ...rowParts,
     ...promiseParts,
+    ...(stampArt ? [stampArt] : []),
     button,
+    ...(buttonFace ? [buttonFace] : []),
     buttonText,
   ];
   for (const part of parts) {

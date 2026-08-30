@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
+import { ART, hasArt } from '../game/artTextures.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
 import { SFX } from '../game/sfx.js';
+import { artImage, faceButtonRect } from './plate.js';
 import { makeTapTarget } from './tapTarget.js';
 import type { Balance } from '../sim/balance.js';
 import {
@@ -58,7 +60,11 @@ export interface BaseScreenOptions {
 }
 
 /** Anything the screen pins and puts on its own depth. */
-type PinnedPart = Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text;
+type PinnedPart =
+  | Phaser.GameObjects.Rectangle
+  | Phaser.GameObjects.Text
+  | Phaser.GameObjects.Image
+  | Phaser.GameObjects.TileSprite;
 
 interface Part {
   readonly parts: readonly PinnedPart[];
@@ -74,13 +80,45 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   let harvest = options.harvest ?? null;
   let selectedRow = deepestOpenCheckpoint(balance, profile);
 
-  const backdrop = scene.add.rectangle(0, 0, width, height, COLORS.shaft).setOrigin(0, 0);
-  const header = scene.add.rectangle(0, 0, width, base.headerHeight, COLORS.dome).setOrigin(0, 0);
+  // The polar night the station stands in, or the flat dark field it replaces.
+  // It is the backdrop of the whole screen, so it shows in the margins and in
+  // the gaps between the rows — which is the whole of the base that is not a
+  // plate, and the whole difference between «a game» and «a debug view».
+  const sky = artImage(scene, ART.baseSky, 0, 0, width, height);
+  const backdrop = sky ?? scene.add.rectangle(0, 0, width, height, COLORS.shaft).setOrigin(0, 0);
+  // The night, sunk behind the screen. Without the picture there is nothing to
+  // sink and no scrim is added at all.
+  const skyScrim = sky
+    ? scene.add.rectangle(0, 0, width, height, COLORS.shaft, base.skyScrimAlpha).setOrigin(0, 0)
+    : null;
+  // Over a picture the header band is a scrim, not a field: the sky keeps
+  // showing through it and the three lines of text keep their contrast.
+  const header = scene.add
+    .rectangle(0, 0, width, base.headerHeight, COLORS.dome, sky ? base.headerScrimAlpha : 1)
+    .setOrigin(0, 0);
   const headerEdge = scene.add
     .rectangle(0, base.headerHeight - 2, width, 2, COLORS.domeEdge)
     .setOrigin(0, 0);
 
-  const title = centerText(scene, width / 2, base.titleY, 'БАЗА · МЕЖДУ СМЕНАМИ', font.large, COLORS.text);
+  // The badge at the head of the title line, and the title beside it. Without
+  // the badge the title simply starts at the margin: nothing else moves.
+  const emblem = artImage(
+    scene,
+    ART.emblem,
+    base.titleX,
+    base.emblemY,
+    base.emblemSize,
+    base.emblemSize,
+  );
+  const titleX = emblem ? base.titleX + base.emblemSize + base.emblemGap : base.titleX;
+  const title = leftText(
+    scene,
+    titleX,
+    base.titleY,
+    'БАЗА · МЕЖДУ СМЕНАМИ',
+    font.medium,
+    COLORS.text,
+  );
   const wallet = centerText(scene, width / 2, base.walletY, '', font.medium, COLORS.scrap);
   // The plan row is split the way the HUD splits its rows: which five-year plan
   // the station is in on the left, the quota that plan hands out on the right.
@@ -94,6 +132,7 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     .rectangle(width - base.margin - base.muteWidth, base.muteY, base.muteWidth, base.muteHeight, COLORS.panel)
     .setOrigin(0, 0)
     .setStrokeStyle(2, COLORS.buttonEdge);
+  const muteFace = faceButtonRect(scene, mute);
   const muteLabel = scene.add
     .text(
       width - base.margin - base.muteWidth / 2,
@@ -114,6 +153,12 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   });
   paintMute();
 
+  // Both or neither, the way the HUD treats its stat icons: a list where seven
+  // rows start with a machine and the eighth starts with a word reads as a bug.
+  const branchIcons = upgradeIds(balance).every((id) =>
+    hasArt(scene, ART.upgradeIconById[id] ?? ''),
+  );
+
   const upgradeRows = upgradeIds(balance).map((id, index) =>
     createUpgradeRow(scene, {
       balance,
@@ -121,6 +166,7 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
       x: base.margin,
       y: base.listTop + (base.rowHeight + base.rowGap) * index,
       rowWidth,
+      icon: branchIcons,
       onBuy,
     }),
   );
@@ -161,6 +207,7 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     .rectangle(base.margin, startY, rowWidth, base.startHeight, COLORS.button)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.buttonEdge);
+  const startFace = faceButtonRect(scene, start);
   makeTapTarget(start, () => {
     onStartShift(selectedRow);
   });
@@ -194,18 +241,22 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
 
   const parts: PinnedPart[] = [
     backdrop,
+    ...(skyScrim ? [skyScrim] : []),
     header,
     headerEdge,
+    ...(emblem ? [emblem] : []),
     title,
     wallet,
     planNumber,
     plan,
     mute,
+    ...(muteFace ? [muteFace] : []),
     muteLabel,
     ...upgradeRows.flatMap((row) => [...row.parts]),
     depthTitle,
     ...chips.flatMap((chip) => [...chip.parts]),
     start,
+    ...(startFace ? [startFace] : []),
     startLabel,
     hangarBack,
     hangarFill,
@@ -304,6 +355,8 @@ interface UpgradeRowOptions {
   readonly x: number;
   readonly y: number;
   readonly rowWidth: number;
+  /** Is there a machine to put at the head of the row? */
+  readonly icon: boolean;
   readonly onBuy: (upgradeId: string) => void;
 }
 
@@ -312,19 +365,40 @@ interface UpgradeRowOptions {
  * next level as the button. A bought-out branch shows as bought and does nothing.
  */
 function createUpgradeRow(scene: Phaser.Scene, options: UpgradeRowOptions): Part {
-  const { balance, upgradeId, x, y, rowWidth, onBuy } = options;
+  const { balance, upgradeId, x, y, rowWidth, icon, onBuy } = options;
   const { base, font } = VIEW;
   const item = upgradeItem(balance, upgradeId);
 
+  // The riveted plate the row is written on, under everything else. With no
+  // plate the rectangle keeps its own dark fill and the row is what it was.
+  const plate = artImage(scene, ART.panelPlate, x, y, rowWidth, base.rowHeight);
+  plate?.setTint(VIEW.plate.plateTint);
   const back = scene.add
     .rectangle(x, y, rowWidth, base.rowHeight, COLORS.panel)
     .setOrigin(0, 0)
     .setStrokeStyle(2, COLORS.dugEdge);
+  if (plate) {
+    // Not a colour trick: the fill is switched off, so the plate is the row and
+    // the rectangle is only the frame around it.
+    back.setFillStyle();
+  }
 
-  const name = leftText(scene, x + base.rowPad, y + base.rowNameY, '', font.medium, COLORS.text);
+  const branch = icon
+    ? artImage(
+        scene,
+        ART.upgradeIconById[upgradeId] ?? '',
+        x + base.rowPad,
+        y + (base.rowHeight - base.rowIconSize) / 2,
+        base.rowIconSize,
+        base.rowIconSize,
+      )
+    : null;
+  const textX = branch ? x + base.rowPad + base.rowIconSize + base.rowIconGap : x + base.rowPad;
+
+  const name = leftText(scene, textX, y + base.rowNameY, '', font.medium, COLORS.text);
   const effect = leftText(
     scene,
-    x + base.rowPad,
+    textX,
     y + base.rowEffectY,
     item?.effect ?? '',
     font.tiny,
@@ -337,6 +411,7 @@ function createUpgradeRow(scene: Phaser.Scene, options: UpgradeRowOptions): Part
     .rectangle(buyX, buyY, base.buyWidth, base.buyHeight, COLORS.buttonOff)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.buttonEdge);
+  const buyFace = faceButtonRect(scene, buy);
   const buyLabel = centerText(
     scene,
     buyX + base.buyWidth / 2,
@@ -354,7 +429,16 @@ function createUpgradeRow(scene: Phaser.Scene, options: UpgradeRowOptions): Part
   });
 
   return {
-    parts: [back, name, effect, buy, buyLabel],
+    parts: [
+      ...(plate ? [plate] : []),
+      back,
+      ...(branch ? [branch] : []),
+      name,
+      effect,
+      buy,
+      ...(buyFace ? [buyFace] : []),
+      buyLabel,
+    ],
     update(profile: Profile): void {
       current = profile;
       const level = upgradeLevel(profile, upgradeId);
@@ -402,6 +486,7 @@ function createChip(scene: Phaser.Scene, options: ChipOptions): ChipPart {
     .rectangle(x, y, chipWidth, base.chipHeight, COLORS.buttonOff)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.dugEdge);
+  const face = faceButtonRect(scene, back);
   makeTapTarget(back, () => {
     onPick(row);
   });
@@ -430,7 +515,7 @@ function createChip(scene: Phaser.Scene, options: ChipOptions): ChipPart {
   }
 
   return {
-    parts: [back, label],
+    parts: [back, ...(face ? [face] : []), label],
     update(profile: Profile): void {
       open = isCheckpointOpen(profile, row);
       paint();

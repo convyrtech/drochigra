@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
+import { ART } from '../game/artTextures.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
 import { SFX } from '../game/sfx.js';
 import type { Balance } from '../sim/balance.js';
 import { resourceName, scrapId, type HangarHarvest } from '../sim/progress.js';
+import { artImageCentred, faceButtonRect } from './plate.js';
 import { makeTapTarget } from './tapTarget.js';
 
 /**
@@ -49,6 +51,19 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
     COLORS.textDim,
   );
 
+  // The heap itself, under the figure. It is what the player came back for, so
+  // it is drawn rather than described — and with it there the figure needs an
+  // outline, because a gold number over dark scrap is a gold number over noise.
+  const pile = artImageCentred(
+    scene,
+    ART.hangarPile,
+    width / 2,
+    panelY + box.pileCenterTop,
+    box.pileSize,
+    box.pileSize,
+  );
+  pile?.setAlpha(box.pileAlpha);
+
   const scrapLabel = resourceName(balance, scrapId(balance)).toUpperCase();
   const amount = centered(
     scene,
@@ -58,6 +73,7 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
     font.huge,
     COLORS.scrap,
   );
+
   const amountUnit = centered(
     scene,
     width / 2,
@@ -66,6 +82,11 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
     font.medium,
     COLORS.scrap,
   );
+  if (pile) {
+    // A gold number over dark scrap is a gold number over noise.
+    amount.setStroke(cssColor(COLORS.shaft), 8);
+    amountUnit.setStroke(cssColor(COLORS.shaft), 6);
+  }
 
   const lines: readonly (readonly [string, number])[] = [
     [`Заполнение ангара: ${Math.round(harvest.fillShare * 100)}%`, COLORS.textDim],
@@ -82,6 +103,7 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
     .rectangle(buttonX, buttonY, box.buttonWidth, box.buttonHeight, COLORS.button)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.buttonEdge);
+  const buttonFace = faceButtonRect(scene, button);
   const buttonText = centered(
     scene,
     buttonX + box.buttonWidth / 2,
@@ -91,15 +113,22 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
     COLORS.text,
   ).setOrigin(0.5, 0.5);
 
-  const parts: (Phaser.GameObjects.Rectangle | Phaser.GameObjects.Text)[] = [
+  type PinnedPart =
+    | Phaser.GameObjects.Rectangle
+    | Phaser.GameObjects.Text
+    | Phaser.GameObjects.Image
+    | Phaser.GameObjects.TileSprite;
+  const parts: PinnedPart[] = [
     shade,
     panel,
     title,
     stamp,
+    ...(pile ? [pile] : []),
     amount,
     amountUnit,
     ...lineObjects,
     button,
+    ...(buttonFace ? [buttonFace] : []),
     buttonText,
   ];
   for (const part of parts) {
@@ -132,7 +161,17 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
     // The panel takes the hit and the number flies out of it: the payment is
     // something that happens, not a screen that quietly disappears.
     scene.tweens.add({
-      targets: [panel, title, stamp, amountUnit, ...lineObjects, button, buttonText],
+      targets: [
+        panel,
+        title,
+        stamp,
+        ...(pile ? [pile] : []),
+        amountUnit,
+        ...lineObjects,
+        button,
+        ...(buttonFace ? [buttonFace] : []),
+        buttonText,
+      ],
       x: `+=${box.shakeOffset}`,
       duration: box.shakeMs,
       yoyo: true,
