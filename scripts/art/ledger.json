@@ -1556,5 +1556,251 @@
       "type": "generations",
       "generations": 1
     }
+  },
+  {
+    "id": "scrap",
+    "at": "2026-08-30T13:32:06.922Z",
+    "seconds": 12.9,
+    "seed": 19943,
+    "size": {
+      "width": 32,
+      "height": 32
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "small heap of scrap metal in bright pale grey steel, clean broken plates and bolts stacked into a low pile, light metal catching the light, a few amber rust marks only, high contrast against nothing, whole pile centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "panel-plate",
+    "at": "2026-08-30T13:32:19.822Z",
+    "seconds": 15.5,
+    "seed": 19942,
+    "size": {
+      "width": 336,
+      "height": 44
+    },
+    "palette": "plate",
+    "colors": [
+      "#8A94A6",
+      "#35608C",
+      "#0E2A44",
+      "#7A4A32",
+      "#F2C14E",
+      "#C0392B"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "one flat unbroken sheet of grey steel filling the whole frame, the same even grey everywhere from top to bottom and from left to right, a single row of small round rivets along the very top edge and a single row along the very bottom edge, nothing whatsoever between those two rows, no rust, no stains, no shadows, no highlights, no scratches, no dents, no machinery, no buildings, no skyline, no snow, no objects, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "icon-drill",
+    "at": "2026-08-30T13:32:35.284Z",
+    "seconds": 20.6,
+    "seed": 19944,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "one big fat cone shaped mining drill bit lying on its side and pointing to the right, thick heavy body, deep spiral grooves along it, bright pale grey steel with amber wear, silhouette wide and unmistakable, whole object centred and filling the frame",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "paper",
+    "at": "2026-08-30T13:32:55.866Z",
+    "seconds": 11,
+    "seed": 19941,
+    "size": {
+      "width": 168,
+      "height": 244
+    },
+    "palette": "paper",
+    "colors": [
+      "#E8EDF2",
+      "#D9C7A8",
+      "#8A94A6",
+      "#7A4A32",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "flat sheet of old office graph paper photographed straight on, filling the entire frame from edge to edge, a regular pale ruled grid of thin lines covering the whole sheet evenly corner to corner, one faint horizontal fold crease across the middle and one faint vertical crease, soft yellowed age stains spread over the sheet, no border, no frame, no dark edge, no torn edge, no writing, no text, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "panel-plate",
+    "at": "2026-08-30T13:33:48.529Z",
+    "seconds": 18.7,
+    "seed": 19945,
+    "size": {
+      "width": 336,
+      "height": 44
+    },
+    "palette": "plate",
+    "colors": [
+      "#8A94A6",
+      "#35608C",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "one flat unbroken sheet of grey steel filling the whole frame, the same even grey everywhere from top to bottom and from left to right, a single row of small round rivets along the very top edge and a single row along the very bottom edge, nothing whatsoever between those two rows, uniform flat lighting, no rust, no stains, no shadows, no highlights, no scratches, no dents, no machinery, no buildings, no skyline, no snow, no objects, no text",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "paper",
+    "at": "2026-08-30T13:34:25.369Z",
+    "seconds": 36,
+    "seed": 19946,
+    "size": {
+      "width": 168,
+      "height": 244
+    },
+    "palette": "paper",
+    "colors": [
+      "#D9C7A8",
+      "#E8EDF2",
+      "#8A94A6",
+      "#7A4A32"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "squared exercise paper seen flat from directly above, a ruled grid of thin pale lines running the whole width and the whole height of the sheet in both directions and making small even squares over every part of it, aged cream paper between the lines, one crease running down the middle, a soft brown water stain in one corner, the grid reaches all four edges of the frame",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "paper",
+    "at": "2026-08-30T13:35:27.321Z",
+    "seconds": 24,
+    "seed": 19947,
+    "size": {
+      "width": 168,
+      "height": 244
+    },
+    "palette": "paper",
+    "colors": [
+      "#D9C7A8",
+      "#E8EDF2",
+      "#8A94A6",
+      "#7A4A32"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "sheet of ruled graph paper, aged cream paper packed with a fine even grid of pale ruled squares and faint fold creases, flat front-facing sheet of paper, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "paper",
+    "at": "2026-08-30T13:36:24.750Z",
+    "seconds": 19.3,
+    "seed": 19948,
+    "size": {
+      "width": 168,
+      "height": 244
+    },
+    "palette": "paper",
+    "colors": [
+      "#D9C7A8",
+      "#8A94A6",
+      "#7A4A32",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "old yellowed paper, cream sheet with faint grey water stains and soft brown age spots spread thinly and evenly over all of it, flat front-facing sheet of paper, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
   }
 ]

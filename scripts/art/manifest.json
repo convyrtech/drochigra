@@ -1,5 +1,5 @@
 {
-  "_comment": "Sprite sheet of ВОСТОК-9. One entry per PNG in content/art/. Ids are file names without the extension; the game looks them up through content/art/index.json, which generate.mjs writes. Order is priority order — the generator walks the list top to bottom and stops cleanly when the key runs out of generations, so the cells (70% of the screen) are always paid for first. Every `size` here is the size the sprite is DRAWN at in design pixels, or an exact whole fraction of it: NEAREST scaling by 1.203 duplicates rows unevenly and scaling by 0.875 throws four rows out of thirty-two. The one exception is `button-face`, which is not drawn at a size at all — it is TILED across nine differently sized buttons, one texture pixel to one design pixel, which is why its own size must stay a power of two. Sides must also be divisible by four: the API answers «422 Canvas width and height must both be divisible by 4» otherwise. tests/art.test.ts holds every one of those sums against src/game/layout.ts.",
+  "_comment": "Sprite sheet of ВОСТОК-9. One entry per PNG in content/art/. Ids are file names without the extension; the game looks them up through content/art/index.json, which generate.mjs writes. Order is priority order — the generator walks the list top to bottom and stops cleanly when the key runs out of generations, so the cells (70% of the screen) are always paid for first. Every `size` here is the size the sprite is DRAWN at in design pixels, or an exact whole fraction of it: NEAREST scaling by 1.203 duplicates rows unevenly and scaling by 0.875 throws four rows out of thirty-two. Nothing is tiled any more — `button-face` was, and its tile had a seam, so it is gone; anything tiled in future must be a power of two on both sides as well. Sides must also be divisible by four: the API answers «422 Canvas width and height must both be divisible by 4» otherwise. tests/art.test.ts holds every one of those sums against src/game/layout.ts.",
   "style": {
     "_comment": "One style for every asset: a mixed set of sprites looks worse than honest rectangles. Do not vary these per asset.",
     "outline": "selective outline",
@@ -16,6 +16,12 @@
       "#7A4A32",
       "#C0392B",
       "#F2C14E",
+      "#0E2A44"
+    ],
+    "paper": [
+      "#D9C7A8",
+      "#8A94A6",
+      "#7A4A32",
       "#0E2A44"
     ],
     "night-sky": [
@@ -69,10 +75,7 @@
     "plate": [
       "#8A94A6",
       "#35608C",
-      "#0E2A44",
-      "#7A4A32",
-      "#F2C14E",
-      "#C0392B"
+      "#0E2A44"
     ],
     "steel": [
       "#8A94A6",
@@ -247,9 +250,9 @@
         "width": 32,
         "height": 32
       },
-      "seed": 19883,
+      "seed": 19943,
       "no_background": true,
-      "prompt": "small pile of rusted metal scrap, bent steel plates bolts and a broken pipe stacked together, whole pile centred"
+      "prompt": "small heap of scrap metal in bright pale grey steel, clean broken plates and bolts stacked into a low pile, light metal catching the light, a few amber rust marks only, high contrast against nothing, whole pile centred"
     },
     {
       "id": "sky",
@@ -281,19 +284,8 @@
         "width": 336,
         "height": 44
       },
-      "seed": 19926,
-      "prompt": "a plain flat sheet of grey steel filling the whole frame from the far left edge to the far right edge, one narrow dark navy border strip along the top edge and one along the bottom edge with small round rivets set in them, the entire middle of the plate is one flat even grey with nothing on it at all, uniform lighting, no rust, no stains, no snow, no white patches, no scratches, no objects, no text"
-    },
-    {
-      "id": "button-face",
-      "group": "base",
-      "palette": "steel",
-      "size": {
-        "width": 64,
-        "height": 64
-      },
-      "seed": 19937,
-      "prompt": "square tile of a steel mine wall, grey steel plating packed with small round rivet heads and fine scratches spread evenly over the whole tile, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects"
+      "seed": 19945,
+      "prompt": "one flat unbroken sheet of grey steel filling the whole frame, the same even grey everywhere from top to bottom and from left to right, a single row of small round rivets along the very top edge and a single row along the very bottom edge, nothing whatsoever between those two rows, uniform flat lighting, no rust, no stains, no shadows, no highlights, no scratches, no dents, no machinery, no buildings, no skyline, no snow, no objects, no text"
     },
     {
       "id": "icon-drill",
@@ -303,9 +295,9 @@
         "width": 48,
         "height": 48
       },
-      "seed": 19888,
+      "seed": 19944,
       "no_background": true,
-      "prompt": "single rusted conical mining drill bit with a short yellow steel collar behind it, pointing right, side view, whole object centred"
+      "prompt": "one big fat cone shaped mining drill bit lying on its side and pointing to the right, thick heavy body, deep spiral grooves along it, bright pale grey steel with amber wear, silhouette wide and unmistakable, whole object centred and filling the frame"
     },
     {
       "id": "icon-turret",
@@ -394,13 +386,14 @@
     {
       "id": "paper",
       "group": "paper",
-      "palette": "surface",
+      "palette": "paper",
       "size": {
-        "width": 148,
+        "width": 168,
         "height": 244
       },
-      "seed": 19896,
-      "prompt": "sheet of old yellowed office paper filling the whole frame from edge to edge, a faint pale ruled grid over all of it, one horizontal and one vertical fold crease, worn stained corners and a frayed edge, flat blank sheet, no writing, no text, no objects"
+      "seed": 19948,
+      "prompt": "flat sheet of old cream paper, plain even tone edge to edge, no border, no frame, no objects, no sky, no ground line",
+      "_note": "Четыре генерации (сиды 19941/19946/19947/19948) просили пятна, разводы и линовку — все четыре пришли ровным цветом: при форсированной палитре низкоконтрастный узор схлопывается в фон. Промпт приведён к тому, что файл содержит на самом деле. Сетка, сгибы и линовка рисуются кодом в formLayout.sheetRuling — детерминированно и бесплатно. Если однажды захочется фактуры, пробовать надо контрастную формулировку («bold dark ruled lines»), как у пород, а не ещё один сид к «faint»."
     },
     {
       "id": "stamp",

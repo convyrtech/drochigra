@@ -56,13 +56,6 @@ export const ART = {
   /** The riveted plate one upgrade branch is written on. */
   panelPlate: 'panel-plate',
   /**
-   * The steel every button of the game is faced with — «НАЧАТЬ СМЕНУ», the
-   * prices, the checkpoint chips, «СДАТЬ», «ЗАЛП», «К ЗАБОЮ», «НА БАЗУ» and the
-   * one that closes a five-year plan. One sprite, tiled, so a 90-pixel chip and
-   * a 672-pixel button are cut from the same sheet (`VIEW.plate`).
-   */
-  buttonFace: 'button-face',
-  /**
    * Keys of `balance.upgrades.items` to their branch icons. Eight machines
    * instead of eight lines of text — the thing that turns the upgrade list into
    * a machine hall.

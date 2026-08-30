@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
-import { faceButtonRect } from './plate.js';
+import { fitInside } from './formPage.js';
 
 /**
  * «К ЗАБОЮ» — the way back to the work (issue #10). Every hand-over drags the
@@ -37,7 +37,6 @@ export function createFaceButton(scene: Phaser.Scene, options: FaceButtonOptions
     .rectangle(left, top, faceButton.width, faceButton.height, COLORS.button)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.buttonEdge);
-  const steel = faceButtonRect(scene, back);
   const label = scene.add
     .text(left + faceButton.width / 2, top + faceButton.height / 2, 'К ЗАБОЮ ▾', {
       fontFamily: FONT_FAMILY,
@@ -45,9 +44,10 @@ export function createFaceButton(scene: Phaser.Scene, options: FaceButtonOptions
       color: cssColor(COLORS.text),
     })
     .setOrigin(0.5);
+  fitInside(label, faceButton.width - faceButton.labelPad * 2);
 
   let visible = false;
-  const parts = steel ? [back, steel, label] : [back, label];
+  const parts = [back, label];
   for (const part of parts) {
     part.setScrollFactor(0).setDepth(options.depth).setVisible(false);
   }

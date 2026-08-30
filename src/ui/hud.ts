@@ -1,21 +1,43 @@
 import Phaser from 'phaser';
 import { ART, hasArt } from '../game/artTextures.js';
-import { faceButton } from './plate.js';
 import { COLORS, cssColor, FONT_FAMILY, hudButtonHitZone, VIEW } from '../game/layout.js';
 import {
   domeHpShare,
   isDomeWarning,
   isSalvoReady,
-  nextWaveInSec,
   salvoCooldownShare,
 } from '../sim/defense.js';
 import { cargoCapacity, isCargoBlocked, type ShiftState } from '../sim/shift.js';
+import { fitInside } from './formPage.js';
+import {
+  cargoBarLine,
+  depthBox,
+  depthLine,
+  domeBarLine,
+  halfWidth,
+  insideBox,
+  nextWaveBox,
+  nextWaveLine,
+  statsBox,
+  statsFallbackLine,
+  statusBox,
+  statusText,
+  timerBox,
+  timerLine,
+  waveBox,
+  waveLine,
+  type Box,
+} from './hudText.js';
 
 /**
  * Dome zone panel: the shift timer, the wave countdown, the dome health, the
  * cargo, and the two buttons the whole shift is played with — hand the cargo
  * over and fire the salvo. Fixed on screen while the shaft scrolls behind it.
  * All texts are Russian (AGENTS.md), all numbers come from the shift state.
+ *
+ * What each line says, and the width of screen it may say it in, live in
+ * `src/ui/hudText.ts` — no Phaser in them, so `tests/textFit.test.ts` can hold
+ * every line of this panel against its box, in every state the shift has.
  */
 export interface Hud {
   /**
@@ -50,15 +72,14 @@ export interface HudOptions {
 type PinnedPart =
   | Phaser.GameObjects.Rectangle
   | Phaser.GameObjects.Text
-  | Phaser.GameObjects.Image
-  | Phaser.GameObjects.TileSprite;
+  | Phaser.GameObjects.Image;
 
 export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
   const { width, domeHeight, depth, onBank, onSalvo } = options;
   const { hud, font } = VIEW;
   // The bars share one row, and so do the buttons: two halves of the width each.
-  const barWidth = (width - hud.margin * 2 - hud.barGap) / 2;
-  const buttonWidth = (width - hud.margin * 2 - hud.buttonGap) / 2;
+  const barWidth = halfWidth(width, hud.barGap);
+  const buttonWidth = halfWidth(width, hud.buttonGap);
 
   // The polar night behind the station, or the flat navy field it replaces.
   const sky = hasArt(scene, ART.sky);
@@ -106,16 +127,23 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
   const crystalCount = icons ? smallText(scene, 0, hud.statsY, COLORS.crystal, 0) : null;
   const statsRight = smallText(scene, width - hud.margin, hud.statsY, COLORS.textDim, 1);
 
-  const timer = scene.add
-    .text(width / 2, hud.timerY, '', {
-      fontFamily: FONT_FAMILY,
-      fontSize: font.large,
-      color: cssColor(COLORS.text),
-    })
-    .setOrigin(0.5, 0);
+  const timer = remember(
+    scene.add
+      .text(width / 2, hud.timerY, '', {
+        fontFamily: FONT_FAMILY,
+        fontSize: font.large,
+        color: cssColor(COLORS.text),
+      })
+      .setOrigin(0.5, 0),
+  );
 
-  const waveLine = smallText(scene, hud.margin, hud.sideY, COLORS.textDim, 0);
-  const nextWaveLine = smallText(scene, width - hud.margin, hud.sideY, COLORS.textDim, 1);
+  // The two wave labels are centred on the timer rather than pinned to a line of
+  // their own: at `sideY` they sat ten pixels lower than it and read as a
+  // mistake. The timer's height is the only thing that can say where its middle
+  // is, so they are placed after it and take it from the object itself.
+  const sideMiddle = hud.timerY + timer.height / 2;
+  const wave = sideText(scene, hud.margin, sideMiddle, 0);
+  const nextWave = sideText(scene, width - hud.margin, sideMiddle, 1);
 
   const domeBar = createBar(scene, hud.margin, hud.barTop, barWidth, COLORS.buttonEdge);
   const cargoBar = createBar(
@@ -126,13 +154,15 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
     COLORS.scrap,
   );
 
-  const status = scene.add
-    .text(width / 2, hud.statusY, '', {
-      fontFamily: FONT_FAMILY,
-      fontSize: font.small,
-      color: cssColor(COLORS.textDim),
-    })
-    .setOrigin(0.5, 0);
+  const status = remember(
+    scene.add
+      .text(width / 2, hud.statusY, '', {
+        fontFamily: FONT_FAMILY,
+        fontSize: font.small,
+        color: cssColor(COLORS.textDim),
+      })
+      .setOrigin(0.5, 0),
+  );
 
   // Issue #8: the drawn buttons are `hud.buttonHeight` tall because the dome
   // zone has nothing left to give — the timer, the corridor, the shell, the two
@@ -167,8 +197,8 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
     ...(crystalCount ? [crystalCount] : []),
     statsRight,
     timer,
-    waveLine,
-    nextWaveLine,
+    wave,
+    nextWave,
     ...domeBar.parts,
     ...cargoBar.parts,
     status,
@@ -182,55 +212,53 @@ export function createHud(scene: Phaser.Scene, options: HudOptions): Hud {
   return {
     update(state: ShiftState, faceVisible: boolean): void {
       const defense = state.defense;
-      setText(timer, `СМЕНА ${formatTime(state.timeLeftSec)}`);
+      setText(timer, timerLine(state), timerBox(width));
+
+      // The purse and the depth share one row and both grow, so the room each
+      // gets is cut where the other one starts, every frame.
+      const depthText = depthLine(state);
+      const statsText = icons ? `${state.banked}` : statsFallbackLine(state);
+      const statsSpan = statsBox(width, depthText);
+      const depthSpan = depthBox(width, statsText);
       if (icons && crystalCount) {
         // The numbers grow and shrink, so the crystal icon is placed after the
         // scrap number every frame rather than at a guessed offset.
-        setText(statsLeft, `${state.banked}`);
-        setText(crystalCount, `${state.crystals}`);
+        setText(statsLeft, statsText, statsSpan);
+        setText(crystalCount, `${state.crystals}`, statsSpan);
         const numberX = hud.margin + hud.statIconSize + hud.statIconGap;
         statsLeft.setX(numberX);
         const crystalX = numberX + statsLeft.width + hud.statIconGap * 3;
         icons.crystal.setX(crystalX);
         crystalCount.setX(crystalX + hud.statIconSize + hud.statIconGap);
       } else {
-        setText(statsLeft, `СДАНО: ${state.banked} · КРИСТАЛЛЫ: ${state.crystals}`);
+        setText(statsLeft, statsText, statsSpan);
       }
-      setText(statsRight, `ГЛУБИНА: ${state.deepestRow} / ${state.balance.shift.grid_depth}`);
+      setText(statsRight, depthText, depthSpan);
 
-      setText(waveLine, defense.wavesSent > 0 ? `ВОЛНА ${defense.wavesSent}` : 'ЗАТИШЬЕ');
-      setText(
-        nextWaveLine,
-        state.phase === 'running'
-          ? `ДО ВОЛНЫ ${formatTime(nextWaveInSec(state.balance, defense))}`
-          : '',
-      );
+      setText(wave, waveLine(state), waveBox(width));
+      setText(nextWave, nextWaveLine(state), nextWaveBox(width));
 
       const warning = isDomeWarning(state.balance, defense);
       domeBar.set(
         domeHpShare(defense),
-        `КУПОЛ: ${Math.ceil(defense.hp)} / ${defense.hpMax}`,
+        domeBarLine(state),
         warning ? COLORS.warning : COLORS.buttonEdge,
       );
 
       const capacity = cargoCapacity(state);
-      const cargoShare = capacity > 0 ? Math.min(1, state.cargo / capacity) : 0;
       const full = state.cargo >= capacity;
       cargoBar.set(
-        cargoShare,
-        `КАРГО: ${state.cargo} / ${capacity}`,
+        capacity > 0 ? Math.min(1, state.cargo / capacity) : 0,
+        cargoBarLine(state),
         full ? COLORS.warning : COLORS.scrap,
       );
 
       // The salvo button fills back up as the cooldown runs out.
       const ready = isSalvoReady(defense);
       salvo.setFill(1 - salvoCooldownShare(state.balance, defense), ready);
-      setText(
-        salvo.label,
-        ready ? 'ЗАЛП' : `ЗАЛП ${Math.ceil(defense.salvoCooldownSec)}`,
-      );
+      salvo.setLabel(ready ? 'ЗАЛП' : `ЗАЛП ${Math.ceil(defense.salvoCooldownSec)}`);
 
-      setText(status, statusText(state, faceVisible));
+      setText(status, statusText(state, faceVisible), statusBox(width));
       const alarm = warning || isCargoBlocked(state) || state.endReason === 'breach';
       status.setColor(cssColor(alarm ? COLORS.warning : COLORS.textDim));
     },
@@ -260,30 +288,33 @@ function createBar(scene: Phaser.Scene, x: number, y: number, barWidth: number, 
     .setOrigin(0, 0)
     .setStrokeStyle(2, COLORS.domeEdge);
   const fill = scene.add.rectangle(x, y, barWidth, height, color).setOrigin(0, 0);
-  const label = scene.add
-    .text(x + barWidth / 2, y + height / 2, '', {
-      fontFamily: FONT_FAMILY,
-      fontSize: VIEW.font.small,
-      color: cssColor(COLORS.text),
-    })
-    .setOrigin(0.5)
+  const label = remember(
+    scene.add
+      .text(x + barWidth / 2, y + height / 2, '', {
+        fontFamily: FONT_FAMILY,
+        fontSize: VIEW.font.small,
+        color: cssColor(COLORS.text),
+      })
+      .setOrigin(0.5),
+  )
     // The caption crosses the edge of the fill, so it needs a dark outline to
     // stay readable both on the bright bar and on the empty part behind it.
     .setStroke(cssColor(COLORS.shaft), 4);
+  const box = insideBox(x, barWidth);
 
   return {
     parts: [back, fill, label],
     set(share: number, text: string, fillColor: number): void {
       fill.width = barWidth * Math.min(1, Math.max(0, share));
       fill.fillColor = fillColor;
-      setText(label, text);
+      setText(label, text, box);
     },
   };
 }
 
 interface Button {
   readonly parts: PinnedPart[];
-  readonly label: Phaser.GameObjects.Text;
+  readonly setLabel: (text: string) => void;
   readonly setFill: (share: number, ready: boolean) => void;
   /** Is this point of the screen inside the button's touch zone? */
   readonly contains: (x: number, y: number) => boolean;
@@ -312,21 +343,23 @@ function createButton(scene: Phaser.Scene, options: ButtonOptions): Button {
     .rectangle(x, hud.buttonTop, buttonWidth, hud.buttonHeight, COLORS.button)
     .setOrigin(0, 0);
 
-  // The same steel as every other button of the game, over the fill that shows
-  // the salvo cooling down — the cooldown still reads through it.
-  const face = faceButton(scene, x, hud.buttonTop, buttonWidth, hud.buttonHeight);
-
-  const label = scene.add
-    .text(x + buttonWidth / 2, hud.buttonTop + hud.buttonHeight / 2, text, {
-      fontFamily: FONT_FAMILY,
-      fontSize: font.medium,
-      color: cssColor(COLORS.text),
-    })
-    .setOrigin(0.5);
+  const label = remember(
+    scene.add
+      .text(x + buttonWidth / 2, hud.buttonTop + hud.buttonHeight / 2, text, {
+        fontFamily: FONT_FAMILY,
+        fontSize: font.medium,
+        color: cssColor(COLORS.text),
+      })
+      .setOrigin(0.5),
+  );
+  const box = insideBox(x, buttonWidth);
+  fitInside(label, box[1] - box[0]);
 
   return {
-    parts: face ? [back, fill, face, label] : [back, fill, label],
-    label,
+    parts: [back, fill, label],
+    setLabel(next: string): void {
+      setText(label, next, box);
+    },
     setFill(share: number, ready: boolean): void {
       fill.width = buttonWidth * Math.min(1, Math.max(0, share));
       label.setColor(cssColor(ready ? COLORS.text : COLORS.textDim));
@@ -345,53 +378,63 @@ function smallText(
   color: number,
   originX: number,
 ): Phaser.GameObjects.Text {
-  return scene.add
-    .text(x, y, '', {
-      fontFamily: FONT_FAMILY,
-      fontSize: VIEW.font.small,
-      color: cssColor(color),
-    })
-    .setOrigin(originX, 0);
+  return remember(
+    scene.add
+      .text(x, y, '', {
+        fontFamily: FONT_FAMILY,
+        fontSize: VIEW.font.small,
+        color: cssColor(color),
+      })
+      .setOrigin(originX, 0),
+  );
 }
 
-function setText(target: Phaser.GameObjects.Text, value: string): void {
-  if (target.text !== value) {
-    target.setText(value);
-  }
+/** A wave label beside the timer, vertically centred on it. */
+function sideText(
+  scene: Phaser.Scene,
+  x: number,
+  middleY: number,
+  originX: number,
+): Phaser.GameObjects.Text {
+  return remember(
+    scene.add
+      .text(x, middleY, '', {
+        fontFamily: FONT_FAMILY,
+        fontSize: VIEW.font.tiny,
+        color: cssColor(COLORS.textDim),
+      })
+      .setOrigin(originX, 0.5),
+  );
 }
 
-/** mm:ss, rounded up so the last second is visible. */
-function formatTime(seconds: number): string {
-  const total = Math.max(0, Math.ceil(seconds));
-  const minutes = Math.floor(total / 60);
-  const rest = total % 60;
-  return `${minutes}:${rest.toString().padStart(2, '0')}`;
+/**
+ * Writes a line and keeps it inside its box.
+ *
+ * The size is reset before every measurement, so a line that once had to shrink
+ * for a five-digit figure grows back the moment the figure is four digits again.
+ */
+function setText(target: Phaser.GameObjects.Text, value: string, box: Box): void {
+  if (target.text === value) {
+    return;
+  }
+  target.setText(value);
+  target.setFontSize(baseSize(target));
+  fitInside(target, box[1] - box[0]);
 }
 
-function statusText(state: ShiftState, faceVisible: boolean): string {
-  if (state.phase === 'finished') {
-    return state.endReason === 'breach' ? 'КУПОЛ ПРОБИТ — АВАРИЙНЫЙ ПОДЪЁМ' : 'СМЕНА ОКОНЧЕНА';
-  }
-  if (state.phase === 'ending') {
-    return 'ВРЕМЯ ВЫШЛО — ПОДЪЁМ С ДОБЫЧЕЙ';
-  }
-  if (isDomeWarning(state.balance, state.defense)) {
-    return 'КУПОЛ НА ПРЕДЕЛЕ — БЕЙ ЗАЛПОМ';
-  }
-  switch (state.drill.mode) {
-    case 'idle':
-      // Nothing to tap up here: the work is further down, and the button is the
-      // way back to it.
-      return faceVisible ? 'ТКНИ КЛЕТКУ РЯДОМ С ПРОКОПАННОЙ' : 'ЗАБОЙ НИЖЕ — ЖМИ «К ЗАБОЮ»';
-    case 'moving':
-      // Driving between two cells of the same dig order is part of digging:
-      // saying so keeps the line from flickering every fraction of a second.
-      return state.drill.target?.kind === 'surface' ? 'БУР ЕДЕТ К ЛИФТУ' : 'БУР КОПАЕТ';
-    case 'digging':
-      return 'БУР КОПАЕТ';
-    case 'blocked':
-      return 'КАРГО ПОЛНО — БУР СТОИТ, СДАЙ ДОБЫЧУ';
-    case 'banking':
-      return 'СДАЮ ДОБЫЧУ';
-  }
+/** Remembers the size a line was created with, before anything can shrink it. */
+type SizedText = Phaser.GameObjects.Text & { vostokBaseFontSize?: number };
+
+function remember(target: Phaser.GameObjects.Text): Phaser.GameObjects.Text {
+  (target as SizedText).vostokBaseFontSize = Number.parseFloat(String(target.style.fontSize));
+  return target;
+}
+
+/**
+ * The size a line was created with. Phaser only keeps the current one, which may
+ * already have been shrunk to fit a long figure, so a shorter figure could never
+ * get its size back.
+ */
+function baseSize(target: Phaser.GameObjects.Text): number {
+  return (target as SizedText).vostokBaseFontSize ?? Number.parseFloat(String(target.style.fontSize));
 }

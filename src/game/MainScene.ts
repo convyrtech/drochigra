@@ -663,6 +663,12 @@ export class MainScene extends Phaser.Scene {
               .image(col * size + gap / 2, row * size + gap / 2, cellArtKey)
               .setOrigin(0, 0)
               .setDisplaySize(size - gap, size - gap)
+              // One tile per layer would otherwise wallpaper the whole shaft:
+              // ninety-nine identical shells on a screen read as a pattern, not
+              // as rock. Mirroring about half the cells breaks the repeat for
+              // free — origin (0,0) means a flip moves no edge, so the grid and
+              // every hit-box stay exactly where they were.
+              .setFlipX(((row * 31 + col * 17) & 1) === 0)
               .setDepth(LAYER_DEPTH.cellArt),
           );
         }
@@ -683,8 +689,10 @@ export class MainScene extends Phaser.Scene {
       )
       .setOrigin(0.5)
       // The lift row is a picture once the surface sprite exists, and white
-      // letters on a picture need an outline to stay letters.
-      .setStroke(cssColor(COLORS.shaft), 6)
+      // letters on a picture need an outline to stay letters. Six was not
+      // enough against the snow of the surface tile: the strokes of the letters
+      // are thinner than the outline has to be to separate them from it.
+      .setStroke(cssColor(COLORS.shaft), 10)
       .setDepth(LAYER_DEPTH.labels);
 
     this.target = this.add

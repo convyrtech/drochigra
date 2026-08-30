@@ -17,7 +17,7 @@ import type { Balance } from '../src/sim/balance.js';
 /**
  * The art pipeline has one seam that nothing else checks: the ids in
  * `scripts/art/manifest.json` — what gets generated and paid for — and the ids
- * in `src/game/artTextures.ts` — what the game will draw — are two lists that
+ * in `src/game/artIds.ts` — what the game will draw — are two lists that
  * have to say the same thing. A typo on either side is silent: the generator
  * spends a generation on a file nobody loads, or the game quietly keeps drawing
  * a rectangle over art that exists. These tests are the seam.
@@ -59,7 +59,6 @@ const usedIds = [
   ART.sky,
   ART.baseSky,
   ART.panelPlate,
-  ART.buttonFace,
   ...Object.values(ART.upgradeIconById),
   ART.paper,
   ART.stamp,
@@ -68,17 +67,19 @@ const usedIds = [
 ];
 
 /**
- * The sprites that are **tiled** rather than drawn at a size, and so have no
- * entry in `drawnSize` at all.
+ * Sprites the game does not draw at one size, and so have no entry in
+ * `drawnSize`. The list is empty and the rule below is the reason to keep it
+ * that way.
  *
- * `button-face` is the whole of this list and the reason it exists. The game
- * faces nine differently sized buttons with it — a 90-pixel checkpoint chip and
- * the 672-pixel «НАЧАТЬ СМЕНУ» among them — and no single picture can be
- * stretched to all nine without becoming a different material on each. Laid as
- * a tile it is always one texture pixel per design pixel, which is the whole
- * point of the whole-multiple rule below, satisfied by construction.
+ * It used to hold `button-face`, a 64 × 64 steel tile laid over every button of
+ * the game. That sprite is gone — its rivets sat on two of its four edges and a
+ * light diagonal band crossed it, so tiling it drew a grid every 64 pixels and a
+ * chequerboard of quarters across every button. Anything put back on this list
+ * has to be a genuinely seamless tile **and** a power of two on both sides, or
+ * Phaser redraws it scaled into a POT canvas and the whole point of tiling
+ * instead of stretching is gone, silently.
  */
-const tiledIds = new Set<string>([ART.buttonFace]);
+const tiledIds = new Set<string>([]);
 
 const manifestIds = manifest.assets.map((asset) => asset.id);
 
@@ -165,8 +166,8 @@ const drawnSize: Record<string, { width: number; height: number }> = {
       { width: VIEW.base.rowIconSize, height: VIEW.base.rowIconSize },
     ]),
   ),
-  // One blank, two screens: the report and the victory panel are the same box
-  // on purpose, and the test below holds them to it.
+  // One blank, three screens: the report, the closed plan and the hangar receipt
+  // are the same box on purpose, and the test below holds them to it.
   paper: { width: VIEW.report.panelWidth, height: VIEW.report.panelHeight },
   stamp: { width: VIEW.report.stampSize, height: VIEW.report.stampSize },
   'hangar-pile': { width: VIEW.hangar.pileSize, height: VIEW.hangar.pileSize },
@@ -180,6 +181,13 @@ const drawnSize: Record<string, { width: number; height: number }> = {
  * given bytes turning up inside a deflate stream are not worth a sentence.
  */
 const PLACEHOLDER_KEYWORD = 'vostok9-placeholder';
+
+/**
+ * The two sprites generated before the API told us its canvas rule, and kept at
+ * their odd sizes because regenerating a sprite that already exists means paying
+ * for it twice. Nothing may be added to this list: a new asset gets a legal size.
+ */
+const BOUGHT_BEFORE_THE_RULE = new Set(['dome', 'enemy-aberration']);
 
 describe('the sprite manifest and the game agree on what exists', () => {
   it('names every sprite the game draws', () => {
@@ -207,15 +215,17 @@ describe('the sprite manifest and the game agree on what exists', () => {
     );
   });
 
-  it('draws the same blank on the report and on the closed plan, at the same size', () => {
-    // `paper` is one sprite and a sprite has one drawn size: if these two boxes
-    // ever drift apart, one of the two screens is resampling the sheet.
-    expect(VIEW.victory.panelWidth).toBe(VIEW.report.panelWidth);
-    expect(VIEW.victory.panelHeight).toBe(VIEW.report.panelHeight);
-    // Same for the badge and the stamp, which both screens also share.
-    expect(VIEW.victory.emblemSize).toBe(VIEW.report.emblemSize);
+  it('draws the same blank on all three form screens, at the same size', () => {
+    // `paper` is one sprite and a sprite has one drawn size: if these boxes ever
+    // drift apart, one of the three screens is resampling the sheet.
+    for (const box of [VIEW.victory, VIEW.hangar]) {
+      expect(box.panelWidth).toBe(VIEW.report.panelWidth);
+      expect(box.panelHeight).toBe(VIEW.report.panelHeight);
+      // Same for the badge and the stamp, which all three screens also share.
+      expect(box.emblemSize).toBe(VIEW.report.emblemSize);
+      expect(box.stampSize).toBe(VIEW.report.stampSize);
+    }
     expect(VIEW.base.emblemSize).toBe(VIEW.report.emblemSize);
-    expect(VIEW.victory.stampSize).toBe(VIEW.report.stampSize);
   });
 
   it('has a creature per enemy of the balance', () => {
@@ -265,11 +275,12 @@ describe('the manifest itself', () => {
     }
   });
 
-  it('tiles the button face, and tiles it from a power-of-two square', () => {
+  it('tiles nothing, or tiles it from a power-of-two square', () => {
     // A tile is only ever drawn one texture pixel to one design pixel — but only
     // if Phaser can wrap the texture itself. Give TileSprite a non-power-of-two
     // frame and it redraws it, **scaled**, into a POT canvas: the whole reason
-    // for tiling instead of stretching is gone, silently.
+    // for tiling instead of stretching is gone, silently. Nothing is tiled
+    // today; this holds whatever is tiled tomorrow.
     for (const id of tiledIds) {
       const asset = manifest.assets.find((candidate) => candidate.id === id);
       expect(asset, `${id} is tiled but not in the manifest`).toBeDefined();
@@ -313,11 +324,12 @@ describe('the manifest itself', () => {
       expect(asset.size.height, asset.id).toBeLessThanOrEqual(400);
       // Learned from the API at the cost of one round trip: a canvas whose
       // sides are not both divisible by four comes back «422 Canvas width and
-      // height must both be divisible by 4» for a 150×246 canvas. Only asked of
-      // what has not been bought yet — `dome`, `enemy-aberration` and
-      // `enemy-moth` were generated before the API said so and are on disk, and
-      // resizing a sprite that already exists would mean paying for it twice.
-      if (!filesOnDisk.has(asset.id)) {
+      // height must both be divisible by 4». The two exemptions are named one by
+      // one rather than «anything already on disk», which is what this used to
+      // say: every asset is on disk today, so that spelling guarded nothing at
+      // all and a new sprite with a bad size would have sailed past it into a
+      // 422 and a wasted round trip.
+      if (!BOUGHT_BEFORE_THE_RULE.has(asset.id)) {
         expect(asset.size.width % 4, `${asset.id}: width not divisible by 4`).toBe(0);
         expect(asset.size.height % 4, `${asset.id}: height not divisible by 4`).toBe(0);
       }

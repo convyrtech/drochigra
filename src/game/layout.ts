@@ -45,6 +45,22 @@ export const TOUCH_REFERENCE_SCREEN_CSS = 393;
  */
 export const MIN_TOUCH = Math.ceil((MIN_TOUCH_CSS * DESIGN_WIDTH) / TOUCH_REFERENCE_SCREEN_CSS);
 
+/**
+ * The station blank, and the box the three form screens all print on.
+ *
+ * The `paper` sprite is generated at 168 × 244 and drawn at ×4, which is the
+ * only ratio NEAREST is exact at; the report, the closed plan and the hangar
+ * receipt are literally the same sheet at the same size, so the three read as
+ * three pages of one file and `tests/art.test.ts` holds them to it.
+ *
+ * 672 is the width of the design canvas less a 24-pixel margin on each side.
+ * The sheet used to be 592 and three separate lines could not be made to fit
+ * inside it — a masthead, a subtitle and a signature all walked off the paper —
+ * while sixty pixels of screen sat unused down either side.
+ */
+const FORM_PANEL_WIDTH = 672;
+const FORM_PANEL_HEIGHT = 976;
+
 export const VIEW = {
   /** Design resolution, portrait. Phaser scales it to any screen. */
   width: DESIGN_WIDTH,
@@ -96,6 +112,8 @@ export const VIEW = {
     width: 232,
     height: MIN_TOUCH,
     margin: 20,
+    /** Clear space kept inside it, around «К ЗАБОЮ ▾». */
+    labelPad: 12,
   },
 
   /** Rows of the dome zone, top to bottom. All values are pixels from its top. */
@@ -105,8 +123,8 @@ export const VIEW = {
     statsY: 6,
     /**
      * The scrap and crystal icons of that line, when they exist. Two pictures
-     * and two numbers say what «СДАНО: 115 · КРИСТАЛЛЫ: 1» says, in half the
-     * width of a phone screen; with no icons the words come back.
+     * and two numbers say what «ЛОМ: 115 · КР: 1» says, in half the width of a
+     * phone screen; with no icons the words come back.
      */
     statIconSize: 32,
     statIconGap: 8,
@@ -122,12 +140,20 @@ export const VIEW = {
     skyScrimBottomTop: 256,
     /** The shift timer, centred. Wave labels sit beside it, so it is not huge. */
     timerY: 40,
-    /** Wave number on the left, countdown to the next wave on the right. */
-    sideY: 54,
+    /**
+     * The width the centred timer is allowed, and so the width the two wave
+     * labels beside it are not. The timer is centred and grows both ways, so
+     * without a reserved box «СМЕНА 10:00» and «ЧЕРЕЗ 0:35» simply ran into
+     * each other on the right of the screen — which is exactly what they did.
+     * The labels take what is left of the half screen minus the margin.
+     */
+    timerWidth: 320,
     /** Dome health and cargo share one row: the zone has no space to stack them. */
     barTop: 268,
     barHeight: 32,
     barGap: 24,
+    /** Clear space kept inside a bar and inside a button, around its caption. */
+    labelPad: 8,
     statusY: 306,
     buttonTop: 346,
     /**
@@ -222,29 +248,35 @@ export const VIEW = {
    * a header band with the form code, the plan percent as the headline, then one
    * ruled line per figure — label on the left, number on the right.
    *
-   * The panel is the size of the `paper` sprite times four (148 × 244), and the
-   * victory screen is given the very same box on purpose: both print on the same
-   * blank, and one sprite may only ever be drawn at one size (tests/art.test.ts).
+   * The panel is the size of the `paper` sprite times four (168 × 244), and the
+   * closed plan and the hangar are given the very same box on purpose: all three
+   * print on the same blank, and one sprite may only ever be drawn at one size
+   * (tests/art.test.ts). It is 672 wide and not 592: 592 left thirty pixels of
+   * screen unused on each side and three lines could not be made to fit inside
+   * it, so the sheet was re-cut to the width of the phone less one margin.
    */
   report: {
-    panelWidth: 592,
-    panelHeight: 976,
+    panelWidth: FORM_PANEL_WIDTH,
+    panelHeight: FORM_PANEL_HEIGHT,
     pad: 28,
     /**
-     * The printed masthead. It stays a dark band even on the white blank — a
-     * form has a printed head — and it is the one place on these two screens
-     * where the text is light. It is twenty pixels taller than it was and the
-     * title one size smaller, because the station badge now sits at its left
-     * edge and «АКТ О СРЫВЕ СМЕНЫ» centred at `font.large` reached it.
+     * The printed masthead. It stays a dark band even on the pale blank — a form
+     * has a printed head — and it is the one place on these screens where the
+     * text is light. The badge sits at its left edge with the title beside it,
+     * and the form code runs the full width of the sheet **under** the badge:
+     * set beside it, «ФОРМА В-9 · ПЯТИЛЕТКА N · СТАНЦИЯ ВОСТОК-9» is wider than
+     * the room the badge leaves, whatever the width of the sheet.
      */
     headerHeight: 112,
-    titleTop: 22,
-    formCodeTop: 66,
-    /** «ПЛАН ВЫПОЛНЕН НА N%» — the line the whole form is about. */
+    titleTop: 20,
+    formCodeTop: 78,
+    /** «ПЛАН ВЫПОЛНЕН: N%» — the line the whole form is about. */
     percentTop: 124,
-    stampTop: 178,
-    rowsTop: 224,
+    stampTop: 186,
+    rowsTop: 228,
     rowHeight: 50,
+    /** The clear space kept between a row's caption and its figure. */
+    rowGap: 24,
     /** The ruled line under every row of the form. */
     ruleHeight: 1,
     /** Signature line above the button, measured from the panel bottom. */
@@ -266,7 +298,7 @@ export const VIEW = {
      * multiples of that, so this is the one size it may be drawn at.
      */
     emblemSize: 64,
-    emblemY: 20,
+    emblemY: 12,
     emblemGap: 12,
   },
 
@@ -281,13 +313,15 @@ export const VIEW = {
     headerHeight: 160,
     /**
      * The title is set beside the badge on the left and not centred, and it is
-     * one size down from the headline it used to be. Centred at `font.large` it
-     * ran straight under the sound toggle in the top-right corner and lost its
-     * last four letters — on the first screen of the game, under the new sky.
-     * Left of the badge there is a fixed amount of room and the line fits it.
+     * `font.small`, two sizes down from the headline it used to be. Centred at
+     * `font.large` it ran under the sound toggle in the top-right corner and
+     * lost its last four letters; at `font.medium` beside the badge it filled
+     * the room left by the toggle to the last pixel, which is a collision
+     * waiting for one more letter. The wallet under it is the line to read
+     * anyway, and it kept `font.medium`.
      */
     titleX: 24,
-    titleY: 30,
+    titleY: 34,
     walletY: 80,
     planY: 126,
     /** The station badge, when there is one, at the head of the title line. */
@@ -316,9 +350,11 @@ export const VIEW = {
      * wallet line under it. Its hit zone is grown instead (`tapTarget.ts`), and
      * it may spread over the wallet text freely — text is not tappable.
      */
-    muteWidth: 160,
+    muteWidth: 150,
     muteHeight: 54,
     muteY: 14,
+    /** Clear space kept between the title and the sound toggle beside it. */
+    titleGap: 16,
     /** One upgrade row: as tall as the price button inside it (issue #8). */
     rowHeight: MIN_TOUCH,
     rowGap: 6,
@@ -333,9 +369,13 @@ export const VIEW = {
     /** Text baselines inside a row, from its top. */
     rowNameY: 12,
     rowEffectY: 48,
+    /** Clear space kept between the row's two lines of text and the price. */
+    rowTextGap: 12,
     buyWidth: 210,
     /** The price button fills the row: it is the tap target of the base. */
     buyHeight: MIN_TOUCH,
+    /** Clear space kept inside the price button, around its caption. */
+    buyPad: 8,
     /** Gap between the upgrade list and the depth picker. */
     sectionGap: 12,
     sectionTitleHeight: 38,
@@ -354,35 +394,55 @@ export const VIEW = {
   },
 
   /**
-   * The hangar collection screen shown on coming back. One big number, two lines
-   * of explanation and one wide button, so the whole thing reads at a glance.
+   * The hangar receipt shown on coming back: what the hangar made while the game
+   * was closed, how long it worked for, and one button that takes it (PLAN_V1
+   * §7). It is the third page of the same file as the report and the closed
+   * plan — the same blank at the same size, the same masthead with the same
+   * badge, the same ruled rows and the same rubber stamp — because it was the
+   * one screen of the game still drawn as a bare dark oblong.
    */
   hangar: {
-    panelWidth: 600,
-    panelHeight: 660,
-    titleTop: 44,
-    stampTop: 96,
-    /** The pile itself: the number the player came back for. */
-    amountTop: 176,
+    panelWidth: FORM_PANEL_WIDTH,
+    panelHeight: FORM_PANEL_HEIGHT,
+    pad: 28,
+    headerHeight: 112,
+    titleTop: 24,
+    formCodeTop: 78,
+    emblemSize: 64,
+    emblemY: 12,
+    emblemGap: 12,
     /**
-     * The heap the number is written over, when there is a sprite for it. It is
-     * drawn behind the figure, so the figure takes a dark outline the moment the
-     * heap is there — a gold number on bare panel needs none.
+     * The heap the number is written over. It is drawn behind the figure, so the
+     * figure takes a dark outline the moment the heap is there — a gold number
+     * on bare paper needs none.
      */
     pileSize: 240,
-    pileCenterTop: 244,
+    pileCenterTop: 296,
     /**
      * The heap is the ground the figure is written on, not a second thing on the
-     * screen: at full strength it and the two lines of type were the same size
-     * and fought each other for the middle of the panel.
+     * screen. It is nearly opaque now: at 0.62 over a dark panel it was a smudge
+     * nobody could name, and over the pale blank it would be fainter still.
      */
-    pileAlpha: 0.62,
-    /** Below the unit under the number, so «ЛОМ» is not stepped on. */
-    linesTop: 330,
-    lineHeight: 40,
+    pileAlpha: 0.92,
+    /** The pile itself: the number the player came back for. */
+    amountTop: 250,
+    /** Under the heap, not on it: on it the word was buried in the scrap. */
+    amountUnitTop: 436,
+    /** What the hangar did, one ruled row each, the way the report writes them. */
+    rowsTop: 500,
+    rowHeight: 56,
+    rowGap: 24,
+    ruleHeight: 1,
+    /** The one line that is a sentence and not a figure. */
+    noteTop: 700,
+    /** Signature line above the button, measured from the panel bottom. */
+    signatureBottom: 200,
+    stampSize: 88,
+    stampRightPad: 28,
+    stampBottom: 120,
     buttonWidth: 420,
     buttonHeight: 112,
-    buttonBottom: 52,
+    buttonBottom: 56,
     /** The number breathes while it waits to be taken. */
     idlePulseMs: 900,
     idlePulseScale: 1.06,
@@ -416,17 +476,18 @@ export const VIEW = {
   },
 
   /**
-   * The victory screen: the bottom of the Abyss on row 30 and the next five-year
-   * plan. Same station paper as the report, one line per promise, one wide button.
+   * The victory screen: the bottom of the Abyss on the last row and the next
+   * five-year plan. Same station paper as the report, one line per promise, one
+   * wide button.
    */
   victory: {
     /** The report's blank, to the pixel: it is literally the same sprite. */
-    panelWidth: 592,
-    panelHeight: 976,
+    panelWidth: FORM_PANEL_WIDTH,
+    panelHeight: FORM_PANEL_HEIGHT,
     pad: 30,
     /** A printed masthead, like the report's, so the title stays readable ink. */
     headerHeight: 120,
-    titleTop: 42,
+    titleTop: 24,
     stampTop: 138,
     /** The row the whole thing is about, in the biggest type the panel takes. */
     depthTop: 196,
@@ -434,16 +495,24 @@ export const VIEW = {
     /** Figures of the closed plan, one ruled row each. */
     rowsTop: 350,
     rowHeight: 48,
+    rowGap: 24,
     ruleHeight: 1,
     /** What the next plan changes, as a list under the figures. */
     promisesTop: 586,
     promiseHeight: 40,
+    /**
+     * Clear space kept between the longest promise and the rubber stamp beside
+     * it. The stamp shares the band with the promises — there is nowhere else on
+     * the sheet for it — so the promises are written into the room left of it
+     * and not into the full width of the page. Two of them used to run under it.
+     */
+    promiseStampGap: 16,
     /** The rubber stamp, right of the promises, where nothing is written. */
     stampSize: 88,
     stampRightPad: 40,
     stampBottom: 268,
     emblemSize: 64,
-    emblemY: 28,
+    emblemY: 16,
     emblemGap: 12,
     buttonWidth: 480,
     buttonHeight: 116,
@@ -488,35 +557,31 @@ export const VIEW = {
   },
 
   /**
-   * The steel every button in the game is faced with (`button-face`).
+   * The riveted plate one upgrade branch is written on (`panel-plate`).
    *
-   * It is laid over the coloured plate rather than replacing it, and it is laid
-   * as a **tile**, not as a stretched picture. Both follow from the same fact:
-   * the game's buttons are nine different sizes, from a 90-pixel checkpoint chip
-   * to the 672-pixel «НАЧАТЬ СМЕНУ», and one sprite stretched to all nine would
-   * be a different material on every screen — thin scratches here, smeared
-   * blotches there. A tile is drawn at one texture pixel per design pixel
-   * everywhere, so the steel is the same steel at every size, and the colour
-   * underneath keeps saying what the button says today: blue when it can be
-   * pressed, dark when it cannot.
+   * It is laid **under** the row's own rectangle rather than replacing it, so a
+   * missing PNG costs the screen nothing: `null` comes back, nothing is added to
+   * the display list, and the rectangle is the whole row again.
+   *
+   * There used to be a second sprite here — `button-face`, a steel tile laid
+   * over every button of the game. It is gone. The tile was not seamless: the
+   * rivets sat on two of its four edges and a light diagonal band crossed it, so
+   * tiling it drew a grid every 64 pixels and a chequerboard of light and dark
+   * quarters across every button, and on «НАЧАТЬ ПЯТИЛЕТКУ 2» a light quarter
+   * landed exactly under the white caption. Buttons read better with nothing
+   * over them, which is what they have.
    */
   plate: {
     /**
-     * How much of the steel is let through over the colour of a button. Low on
-     * purpose: the colour is what says whether the button can be pressed, and at
-     * half strength the mid-grey of the sprite washed «can pay» and «cannot pay»
-     * into the same pale slab.
+     * The upgrade plate, knocked back behind the words written on it. Untinted
+     * it is #8A94A6 — a mid grey lighter than every text colour the game writes,
+     * so eight rows of it turned the first screen into a white wall with pale
+     * words on it. It was 0x66779a, which left the plate at #374564: the branch
+     * icons are painted in #7A4A32 rust and that is the same brightness, so
+     * three of the eight machines could not be made out at all. This is dark
+     * enough that a rust-coloured machine is a shape on it.
      */
-    faceAlpha: 0.38,
-    /** Cools the steel to the blue the rest of the interface is lit by. */
-    faceTint: 0x93a6cc,
-    /**
-     * The upgrade plate, knocked back to the darkness of the panel it replaces.
-     * Untinted it is #8A94A6 — a mid grey that is lighter than every text colour
-     * the game writes on it, so eight rows of it turned the first screen into a
-     * white wall with pale words on it.
-     */
-    plateTint: 0x66779a,
+    plateTint: 0x3f4a63,
   },
 } as const;
 
@@ -678,7 +743,7 @@ export const PAPER_INK: FormInk = {
   crystal: 0x12617a,
   warn: 0xb03024,
   good: 0x14666b,
-  rule: 0xa9a396,
+  rule: 0x9c9179,
 };
 
 /** Shapes an enemy can be drawn as. Only the view cares. */

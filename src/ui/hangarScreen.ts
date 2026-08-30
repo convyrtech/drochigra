@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
-import { ART } from '../game/artTextures.js';
-import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
+import { hasArt } from '../game/artTextures.js';
+import { VIEW } from '../game/layout.js';
 import { SFX } from '../game/sfx.js';
 import type { Balance } from '../sim/balance.js';
-import { resourceName, scrapId, type HangarHarvest } from '../sim/progress.js';
-import { artImageCentred, faceButtonRect } from './plate.js';
+import type { HangarHarvest } from '../sim/progress.js';
+import { hangarPage } from './formLayout.js';
+import { drawFormPage } from './formPage.js';
 import { makeTapTarget } from './tapTarget.js';
 
 /**
@@ -13,10 +14,13 @@ import { makeTapTarget } from './tapTarget.js';
  * Shown only when there is something to take — an empty hangar says nothing and
  * the base opens straight away.
  *
- * Taking it has to feel like getting paid, so the number flies up and the panel
- * shakes before the base appears. Sound is task #7 and is not touched here.
+ * It is the third page of the same file as the report and the closed plan: same
+ * blank, same masthead, same badge, same ruled rows, same rubber stamp. It used
+ * to be a bare dark oblong with a number on it — the one screen of the game that
+ * the art never reached.
  *
- * Every part is pinned with scrollFactor 0 and put on one depth, like the report.
+ * Taking it has to feel like getting paid, so the number flies up and the panel
+ * shakes before the base appears.
  */
 export interface HangarScreenOptions {
   readonly width: number;
@@ -30,110 +34,17 @@ export interface HangarScreenOptions {
 
 export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOptions): void {
   const { width, height, depth, balance, harvest, onCollect } = options;
-  const { hangar: box, font } = VIEW;
+  const box = VIEW.hangar;
 
-  const shade = scene.add.rectangle(0, 0, width, height, COLORS.shaft, 0.9).setOrigin(0, 0);
-
-  const panelX = (width - box.panelWidth) / 2;
-  const panelY = (height - box.panelHeight) / 2;
-  const panel = scene.add
-    .rectangle(panelX, panelY, box.panelWidth, box.panelHeight, COLORS.panel)
-    .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.domeEdge);
-
-  const title = centered(scene, width / 2, panelY + box.titleTop, 'АНГАР РАБОТАЛ БЕЗ ТЕБЯ', font.large, COLORS.text);
-  const stamp = centered(
-    scene,
-    width / 2,
-    panelY + box.stampTop,
-    `СМЕНА В ОТСУТСТВИЕ · ${formatHours(harvest.hours)}`,
-    font.small,
-    COLORS.textDim,
-  );
-
-  // The heap itself, under the figure. It is what the player came back for, so
-  // it is drawn rather than described — and with it there the figure needs an
-  // outline, because a gold number over dark scrap is a gold number over noise.
-  const pile = artImageCentred(
-    scene,
-    ART.hangarPile,
-    width / 2,
-    panelY + box.pileCenterTop,
-    box.pileSize,
-    box.pileSize,
-  );
-  pile?.setAlpha(box.pileAlpha);
-
-  const scrapLabel = resourceName(balance, scrapId(balance)).toUpperCase();
-  const amount = centered(
-    scene,
-    width / 2,
-    panelY + box.amountTop,
-    `+${harvest.scrap}`,
-    font.huge,
-    COLORS.scrap,
-  );
-
-  const amountUnit = centered(
-    scene,
-    width / 2,
-    panelY + box.amountTop + box.lineHeight * 2,
-    scrapLabel,
-    font.medium,
-    COLORS.scrap,
-  );
-  if (pile) {
-    // A gold number over dark scrap is a gold number over noise.
-    amount.setStroke(cssColor(COLORS.shaft), 8);
-    amountUnit.setStroke(cssColor(COLORS.shaft), 6);
-  }
-
-  const lines: readonly (readonly [string, number])[] = [
-    [`Заполнение ангара: ${Math.round(harvest.fillShare * 100)}%`, COLORS.textDim],
-    [`Потолок простоя: ${formatHours(balance.offline.cap_hours)}`, COLORS.textDim],
-    ['Ангар не копает глубже — только лом', COLORS.textDim],
-  ];
-  const lineObjects = lines.map(([text, color], index) =>
-    centered(scene, width / 2, panelY + box.linesTop + box.lineHeight * index, text, font.small, color),
-  );
-
-  const buttonX = (width - box.buttonWidth) / 2;
-  const buttonY = panelY + box.panelHeight - box.buttonBottom - box.buttonHeight;
-  const button = scene.add
-    .rectangle(buttonX, buttonY, box.buttonWidth, box.buttonHeight, COLORS.button)
-    .setOrigin(0, 0)
-    .setStrokeStyle(3, COLORS.buttonEdge);
-  const buttonFace = faceButtonRect(scene, button);
-  const buttonText = centered(
-    scene,
-    buttonX + box.buttonWidth / 2,
-    buttonY + box.buttonHeight / 2,
-    'ЗАБРАТЬ',
-    font.large,
-    COLORS.text,
-  ).setOrigin(0.5, 0.5);
-
-  type PinnedPart =
-    | Phaser.GameObjects.Rectangle
-    | Phaser.GameObjects.Text
-    | Phaser.GameObjects.Image
-    | Phaser.GameObjects.TileSprite;
-  const parts: PinnedPart[] = [
-    shade,
-    panel,
-    title,
-    stamp,
-    ...(pile ? [pile] : []),
-    amount,
-    amountUnit,
-    ...lineObjects,
-    button,
-    ...(buttonFace ? [buttonFace] : []),
-    buttonText,
-  ];
-  for (const part of parts) {
-    part.setScrollFactor(0).setDepth(depth);
-  }
+  const page = hangarPage({
+    width,
+    height,
+    hasArt: (id) => hasArt(scene, id),
+    balance,
+    harvest,
+  });
+  const drawn = drawFormPage(scene, page, { width, height, depth });
+  const amount = drawn.text('amount');
 
   // The pile breathes until it is taken, so the eye goes to the number first.
   const breathe = scene.tweens.add({
@@ -146,32 +57,22 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
   });
 
   let taken = false;
-  makeTapTarget(button, () => {
+  makeTapTarget(drawn.button, () => {
     if (taken) {
       return;
     }
     taken = true;
-    button.disableInteractive();
+    drawn.button.disableInteractive();
     breathe.stop();
     amount.setScale(1);
     // Taking the pile is a gesture: unlock the context and ring it in.
     SFX.unlock();
     SFX.hangarCollect();
 
-    // The panel takes the hit and the number flies out of it: the payment is
+    // The sheet takes the hit and the number flies out of it: the payment is
     // something that happens, not a screen that quietly disappears.
     scene.tweens.add({
-      targets: [
-        panel,
-        title,
-        stamp,
-        ...(pile ? [pile] : []),
-        amountUnit,
-        ...lineObjects,
-        button,
-        ...(buttonFace ? [buttonFace] : []),
-        buttonText,
-      ],
+      targets: drawn.panelParts.filter((part) => part !== amount),
       x: `+=${box.shakeOffset}`,
       duration: box.shakeMs,
       yoyo: true,
@@ -187,7 +88,7 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
       ease: Phaser.Math.Easing.Cubic.Out,
       onComplete: () => {
         scene.time.delayedCall(box.collectHoldMs, () => {
-          for (const part of parts) {
+          for (const part of drawn.parts) {
             part.destroy();
           }
           onCollect();
@@ -195,31 +96,4 @@ export function createHangarScreen(scene: Phaser.Scene, options: HangarScreenOpt
       },
     });
   });
-}
-
-/** «4 ч 30 мин» — hours the way a form would write them, minutes never lost. */
-function formatHours(hours: number): string {
-  const totalMinutes = Math.max(0, Math.round(hours * 60));
-  const wholeHours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (wholeHours <= 0) {
-    return `${minutes} мин`;
-  }
-  if (minutes === 0) {
-    return `${wholeHours} ч`;
-  }
-  return `${wholeHours} ч ${minutes} мин`;
-}
-
-function centered(
-  scene: Phaser.Scene,
-  x: number,
-  y: number,
-  text: string,
-  fontSize: string,
-  color: number,
-): Phaser.GameObjects.Text {
-  return scene.add
-    .text(x, y, text, { fontFamily: FONT_FAMILY, fontSize, color: cssColor(color) })
-    .setOrigin(0.5, 0);
 }

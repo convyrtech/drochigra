@@ -2,23 +2,45 @@ import Phaser from 'phaser';
 import { ART, hasArt } from '../game/artTextures.js';
 import { COLORS, cssColor, FONT_FAMILY, VIEW } from '../game/layout.js';
 import { SFX } from '../game/sfx.js';
-import { artImage, faceButtonRect } from './plate.js';
+import { fitInside } from './formPage.js';
+import { artImage } from './plate.js';
 import { makeTapTarget } from './tapTarget.js';
+import {
+  BASE_TITLE,
+  DEPTH_TITLE,
+  branchEffectLine,
+  branchNameLine,
+  buyBox,
+  buyLine,
+  buyX,
+  chipBox,
+  fullBox,
+  hangarBarLine,
+  muteBox,
+  muteLine,
+  muteX,
+  planLeftBox,
+  planNumberLine,
+  planRightBox,
+  quotaLine,
+  rowTextBox,
+  rowTextX,
+  startBox,
+  startLine,
+  titleBox,
+  titleX,
+  walletLine,
+  type Box,
+} from './baseText.js';
 import type { Balance } from '../sim/balance.js';
 import {
   canBuyUpgrade,
   checkpointRows,
   deepestOpenCheckpoint,
-  hangarScrapPerHour,
   isCheckpointOpen,
   nextUpgrade,
   resourceIds,
-  resourceName,
-  scrapId,
-  shiftQuota,
   upgradeIds,
-  upgradeItem,
-  upgradeLevel,
   walletAmount,
   type HangarHarvest,
   type Profile,
@@ -110,15 +132,15 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     base.emblemSize,
     base.emblemSize,
   );
-  const titleX = emblem ? base.titleX + base.emblemSize + base.emblemGap : base.titleX;
   const title = leftText(
     scene,
-    titleX,
+    titleX(emblem !== null),
     base.titleY,
-    'БАЗА · МЕЖДУ СМЕНАМИ',
-    font.medium,
+    BASE_TITLE,
+    font.small,
     COLORS.text,
   );
+  fitInside(title, boxWidth(titleBox(width, emblem !== null)));
   const wallet = centerText(scene, width / 2, base.walletY, '', font.medium, COLORS.scrap);
   // The plan row is split the way the HUD splits its rows: which five-year plan
   // the station is in on the left, the quota that plan hands out on the right.
@@ -129,13 +151,12 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   // Sound toggle in the top-right corner of the header: it flips the Web Audio
   // master and remembers the choice in its own localStorage key.
   const mute = scene.add
-    .rectangle(width - base.margin - base.muteWidth, base.muteY, base.muteWidth, base.muteHeight, COLORS.panel)
+    .rectangle(muteX(width), base.muteY, base.muteWidth, base.muteHeight, COLORS.panel)
     .setOrigin(0, 0)
     .setStrokeStyle(2, COLORS.buttonEdge);
-  const muteFace = faceButtonRect(scene, mute);
   const muteLabel = scene.add
     .text(
-      width - base.margin - base.muteWidth / 2,
+      muteX(width) + base.muteWidth / 2,
       base.muteY + base.muteHeight / 2,
       '',
       { fontFamily: FONT_FAMILY, fontSize: font.tiny, color: cssColor(COLORS.text) },
@@ -143,7 +164,8 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     .setOrigin(0.5, 0.5);
   const paintMute = (): void => {
     const muted = SFX.isMuted();
-    muteLabel.setText(muted ? 'ЗВУК: ВЫКЛ' : 'ЗВУК: ВКЛ');
+    muteLabel.setText(muteLine(muted));
+    fitInside(muteLabel, boxWidth(muteBox(width)));
     muteLabel.setColor(cssColor(muted ? COLORS.textDim : COLORS.text));
   };
   makeTapTarget(mute, () => {
@@ -175,14 +197,8 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   const depthTitleY = listBottom + base.sectionGap;
   const chipsY = depthTitleY + base.sectionTitleHeight;
 
-  const depthTitle = centerText(
-    scene,
-    width / 2,
-    depthTitleY,
-    'ЛИФТ СПУСКАЕТ НА РЯД',
-    font.small,
-    COLORS.textDim,
-  );
+  const depthTitle = centerText(scene, width / 2, depthTitleY, DEPTH_TITLE, font.small, COLORS.textDim);
+  fitInside(depthTitle, boxWidth(fullBox(width)));
 
   const rows = checkpointRows(balance);
   const chipWidth = (rowWidth - base.chipGap * (rows.length - 1)) / rows.length;
@@ -207,7 +223,6 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     .rectangle(base.margin, startY, rowWidth, base.startHeight, COLORS.button)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.buttonEdge);
-  const startFace = faceButtonRect(scene, start);
   makeTapTarget(start, () => {
     onStartShift(selectedRow);
   });
@@ -250,13 +265,11 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     planNumber,
     plan,
     mute,
-    ...(muteFace ? [muteFace] : []),
     muteLabel,
     ...upgradeRows.flatMap((row) => [...row.parts]),
     depthTitle,
     ...chips.flatMap((chip) => [...chip.parts]),
     start,
-    ...(startFace ? [startFace] : []),
     startLabel,
     hangarBack,
     hangarFill,
@@ -273,10 +286,10 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
   let displayed = new Map(resourceList.map((id) => [id, walletAmount(profile, id)]));
   const WALLET_COUNT_MS = 600;
 
+  const walletSpan = boxWidth(fullBox(width));
+
   function walletLineFrom(amounts: Map<string, number>): string {
-    return resourceList
-      .map((id) => `${resourceName(balance, id).toUpperCase()}: ${amounts.get(id) ?? 0}`)
-      .join(' · ');
+    return walletLine(balance, amounts);
   }
 
   function animateWallet(target: Profile): void {
@@ -292,6 +305,7 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
         displayed.set(id, Math.round(fromValue + (toValue - fromValue) * eased));
       });
       wallet.setText(walletLineFrom(displayed));
+      fitInside(wallet, walletSpan);
       if (t < 1) {
         scene.time.delayedCall(16, step);
       }
@@ -301,8 +315,12 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
 
   function repaint(): void {
     animateWallet(profile);
-    planNumber.setText(`ПЯТИЛЕТКА ${profile.fiveYearPlan}`);
-    plan.setText(`НОРМА СМЕНЫ: ${shiftQuota(balance, profile)}`);
+    const planLeft = planNumberLine(profile);
+    const planRight = quotaLine(balance, profile);
+    planNumber.setText(planLeft);
+    fitInside(planNumber, boxWidth(planLeftBox(width, planRight)));
+    plan.setText(planRight);
+    fitInside(plan, boxWidth(planRightBox(width, planLeft)));
     for (const row of upgradeRows) {
       row.update(profile);
     }
@@ -312,18 +330,16 @@ export function createBaseScreen(scene: Phaser.Scene, options: BaseScreenOptions
     chips.forEach((chip, index) => {
       chip.setSelected(rows[index] === selectedRow);
     });
-    startLabel.setText(`НАЧАТЬ СМЕНУ · РЯД ${selectedRow}`);
+    startLabel.setText(startLine(selectedRow));
+    fitInside(startLabel, boxWidth(startBox(width)));
     repaintHangar();
   }
 
   function repaintHangar(): void {
     const share = Math.min(1, Math.max(0, harvest?.fillShare ?? 0));
     hangarFill.width = rowWidth * share;
-    const perHour = Math.round(hangarScrapPerHour(balance, profile));
-    const scrapLabel = resourceName(balance, scrapId(balance)).toUpperCase();
-    hangarLabel.setText(
-      `АНГАР: ${Math.round(share * 100)}% · ${perHour} ${scrapLabel}/Ч`,
-    );
+    hangarLabel.setText(hangarBarLine(balance, profile, share));
+    fitInside(hangarLabel, boxWidth(startBox(width)));
   }
 
   repaint();
@@ -367,7 +383,6 @@ interface UpgradeRowOptions {
 function createUpgradeRow(scene: Phaser.Scene, options: UpgradeRowOptions): Part {
   const { balance, upgradeId, x, y, rowWidth, icon, onBuy } = options;
   const { base, font } = VIEW;
-  const item = upgradeItem(balance, upgradeId);
 
   // The riveted plate the row is written on, under everything else. With no
   // plate the rectangle keeps its own dark fill and the row is what it was.
@@ -393,28 +408,30 @@ function createUpgradeRow(scene: Phaser.Scene, options: UpgradeRowOptions): Part
         base.rowIconSize,
       )
     : null;
-  const textX = branch ? x + base.rowPad + base.rowIconSize + base.rowIconGap : x + base.rowPad;
+  const textSpan = boxWidth(rowTextBox(x, rowWidth, branch !== null));
+  const textX = rowTextX(x, branch !== null);
 
   const name = leftText(scene, textX, y + base.rowNameY, '', font.medium, COLORS.text);
   const effect = leftText(
     scene,
     textX,
     y + base.rowEffectY,
-    item?.effect ?? '',
+    branchEffectLine(balance, upgradeId),
     font.tiny,
     COLORS.textDim,
   );
+  fitInside(effect, textSpan);
 
-  const buyX = x + rowWidth - base.rowPad - base.buyWidth;
+  const left = buyX(x, rowWidth);
   const buyY = y + (base.rowHeight - base.buyHeight) / 2;
   const buy = scene.add
-    .rectangle(buyX, buyY, base.buyWidth, base.buyHeight, COLORS.buttonOff)
+    .rectangle(left, buyY, base.buyWidth, base.buyHeight, COLORS.buttonOff)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.buttonEdge);
-  const buyFace = faceButtonRect(scene, buy);
+  const buySpan = boxWidth(buyBox(x, rowWidth));
   const buyLabel = centerText(
     scene,
-    buyX + base.buyWidth / 2,
+    left + base.buyWidth / 2,
     buyY + base.buyHeight / 2,
     '',
     font.small,
@@ -436,27 +453,19 @@ function createUpgradeRow(scene: Phaser.Scene, options: UpgradeRowOptions): Part
       name,
       effect,
       buy,
-      ...(buyFace ? [buyFace] : []),
       buyLabel,
     ],
     update(profile: Profile): void {
       current = profile;
-      const level = upgradeLevel(profile, upgradeId);
-      const label = (item?.name ?? upgradeId).toUpperCase();
-      name.setText(level > 0 ? `${label} · УР. ${level}` : label);
+      name.setText(branchNameLine(balance, profile, upgradeId));
+      fitInside(name, textSpan);
 
-      const next = nextUpgrade(balance, profile, upgradeId);
-      if (!next) {
-        buy.fillColor = COLORS.buttonOff;
-        buy.setStrokeStyle(3, COLORS.dugEdge);
-        buyLabel.setText('КУПЛЕНО');
-        buyLabel.setColor(cssColor(COLORS.textDim));
-        return;
-      }
-      const affordable = canBuyUpgrade(balance, profile, upgradeId);
+      const bought = nextUpgrade(balance, profile, upgradeId) === null;
+      const affordable = !bought && canBuyUpgrade(balance, profile, upgradeId);
       buy.fillColor = affordable ? COLORS.button : COLORS.buttonOff;
       buy.setStrokeStyle(3, affordable ? COLORS.buttonEdge : COLORS.dugEdge);
-      buyLabel.setText(`${next.cost} ${resourceName(balance, next.currency).toUpperCase()}`);
+      buyLabel.setText(buyLine(balance, profile, upgradeId, buySpan));
+      fitInside(buyLabel, buySpan);
       buyLabel.setColor(cssColor(affordable ? COLORS.text : COLORS.textDim));
     },
   };
@@ -486,7 +495,6 @@ function createChip(scene: Phaser.Scene, options: ChipOptions): ChipPart {
     .rectangle(x, y, chipWidth, base.chipHeight, COLORS.buttonOff)
     .setOrigin(0, 0)
     .setStrokeStyle(3, COLORS.dugEdge);
-  const face = faceButtonRect(scene, back);
   makeTapTarget(back, () => {
     onPick(row);
   });
@@ -498,6 +506,7 @@ function createChip(scene: Phaser.Scene, options: ChipOptions): ChipPart {
     font.small,
     COLORS.text,
   ).setOrigin(0.5, 0.5);
+  fitInside(label, boxWidth(chipBox(x, chipWidth)));
 
   let open = false;
   let selected = false;
@@ -515,7 +524,7 @@ function createChip(scene: Phaser.Scene, options: ChipOptions): ChipPart {
   }
 
   return {
-    parts: [back, ...(face ? [face] : []), label],
+    parts: [back, label],
     update(profile: Profile): void {
       open = isCheckpointOpen(profile, row);
       paint();
@@ -564,4 +573,9 @@ function rightText(
   return scene.add
     .text(x, y, text, { fontFamily: FONT_FAMILY, fontSize, color: cssColor(color) })
     .setOrigin(1, 0);
+}
+
+/** The width of a box, which is all anything here ever needs from one. */
+function boxWidth(box: Box): number {
+  return box[1] - box[0];
 }
