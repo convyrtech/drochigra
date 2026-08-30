@@ -18,6 +18,11 @@
  *      no image library at all.
  *   3. Running out of credits is a normal outcome, not a crash. The run stops
  *      with a plain message and everything already written stays where it is.
+ *   4. A stand-in is never mistaken for art. `scripts/art/placeholders.mjs`
+ *      stamps every blob it paints with a `tEXt` chunk (`vostok9-placeholder`),
+ *      and this script asks the **file**, not the index — so a deleted or
+ *      hand-written content/art/index.json cannot turn fourteen blobs into
+ *      fourteen sprites nobody paid for.
  *
  * Every answer is appended to scripts/art/ledger.json — usage, seed, prompt,
  * time — so the same set can be rebuilt on a fresh key.
@@ -72,10 +77,23 @@ export function pngChunk(type, data) {
 }
 
 /**
- * Pixels to a PNG file. `channels` is 3 for RGB and 4 for RGBA; the buffer is
- * width*height*channels bytes, row major, no padding.
+ * A `tEXt` chunk: keyword, a zero byte, text. Latin-1 only, which every keyword
+ * and value here is. Ancillary and private, so browsers, Phaser and every image
+ * tool skip it — but it travels inside the file, which is the whole point.
  */
-export function encodePng(width, height, pixels, channels = 3) {
+export function textChunk(keyword, text) {
+  return pngChunk(
+    'tEXt',
+    Buffer.concat([Buffer.from(keyword, 'latin1'), Buffer.from([0]), Buffer.from(text, 'latin1')]),
+  );
+}
+
+/**
+ * Pixels to a PNG file. `channels` is 3 for RGB and 4 for RGBA; the buffer is
+ * width*height*channels bytes, row major, no padding. `extra` chunks are placed
+ * after IHDR, where every ancillary chunk is allowed to sit.
+ */
+export function encodePng(width, height, pixels, channels = 3, extra = []) {
   const stride = width * channels;
   // Every scanline is prefixed with its filter type; 0 means «stored as is».
   const raw = Buffer.alloc((stride + 1) * height);
@@ -96,9 +114,74 @@ export function encodePng(width, height, pixels, channels = 3) {
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     pngChunk('IHDR', ihdr),
+    ...extra,
     pngChunk('IDAT', deflateSync(raw, { level: 9 })),
     pngChunk('IEND', Buffer.alloc(0)),
   ]);
+}
+
+// ---------------------------------------------------------------------------
+// «This is not art»: the mark, and how it is read back
+// ---------------------------------------------------------------------------
+
+/**
+ * The keyword `scripts/art/placeholders.mjs` stamps into every stand-in it
+ * paints, and the only thing that tells a stand-in from real art.
+ *
+ * It lives **in the PNG**, not in `content/art/index.json`, because the index is
+ * a derived file: delete it, run `--index`, and an index-only mark is gone —
+ * fourteen crude blobs silently become «art», `--clean` deletes nothing, the
+ * generator reports «Генерировать нечего» and a fresh key buys not one sprite.
+ * A property of the file survives being deleted, copied, committed and rebuilt.
+ */
+export const PLACEHOLDER_KEYWORD = 'vostok9-placeholder';
+export const PLACEHOLDER_TEXT =
+  'Stand-in painted by scripts/art/placeholders.mjs. NOT the art: crude palette shapes at manifest sizes. Delete with `node scripts/art/placeholders.mjs --clean`.';
+
+/** The chunk that mark is carried in. */
+export function placeholderChunk() {
+  return textChunk(PLACEHOLDER_KEYWORD, PLACEHOLDER_TEXT);
+}
+
+/**
+ * Does this PNG carry the stand-in mark? Walks the chunk list rather than
+ * searching the bytes: a compressed IDAT can spell anything by accident, a
+ * chunk header cannot.
+ */
+export function isPlaceholderPng(buffer) {
+  if (buffer.length < 8 || buffer.readUInt32BE(0) !== 0x89504e47) {
+    return false;
+  }
+  let at = 8;
+  while (at + 8 <= buffer.length) {
+    const length = buffer.readUInt32BE(at);
+    const type = buffer.toString('ascii', at + 4, at + 8);
+    const start = at + 8;
+    const end = start + length;
+    if (end + 4 > buffer.length) {
+      return false;
+    }
+    if (type === 'tEXt') {
+      const zero = buffer.indexOf(0, start);
+      if (zero > start && zero < end && buffer.toString('latin1', start, zero) === PLACEHOLDER_KEYWORD) {
+        return true;
+      }
+    }
+    if (type === 'IEND') {
+      return false;
+    }
+    at = end + 4;
+  }
+  return false;
+}
+
+/** The same question about a file that may not be there at all. */
+export function isPlaceholderFile(path) {
+  try {
+    return isPlaceholderPng(readFileSync(path));
+  } catch {
+    return false;
+  }
 }
 
 export function parseHex(hex) {
@@ -170,7 +253,7 @@ function parseArgs(argv) {
  * exists travels with the art instead of being guessed at runtime, and an asset
  * that was never generated simply stays a rectangle.
  */
-export function writeIndex(manifest, placeholders = readIndex().placeholders ?? []) {
+export function writeIndex(manifest) {
   mkdirSync(ART_DIR, { recursive: true });
   const known = new Set(manifest.assets.map((asset) => asset.id));
   const present = readdirSync(ART_DIR)
@@ -178,13 +261,15 @@ export function writeIndex(manifest, placeholders = readIndex().placeholders ?? 
     .map((name) => name.slice(0, -4))
     .filter((id) => known.has(id))
     .sort();
-  const stillPlaceholders = [...new Set(placeholders)].filter((id) => present.includes(id)).sort();
+  // Read off the files themselves, never carried over from the old index: the
+  // index is written from what is on disk, so it can never disagree with it.
+  const stillPlaceholders = present.filter((id) => isPlaceholderFile(join(ART_DIR, `${id}.png`)));
   writeFileSync(
     INDEX_PATH,
     `${JSON.stringify(
       {
         _comment:
-          'Written by scripts/art/generate.mjs (and scripts/art/placeholders.mjs). Lists the sprites that exist, so the game never asks for a file that is not there — a 404 is a console error and the e2e smoke test counts those. Ids in `placeholders` are stand-ins, not art: generate.mjs overwrites them without being asked.',
+          'Written by scripts/art/generate.mjs (and scripts/art/placeholders.mjs) from what is on disk. Lists the sprites that exist, so the game never asks for a file that is not there — a 404 is a console error and the e2e smoke test counts those. `placeholders` is read back out of the PNGs themselves (a tEXt chunk named vostok9-placeholder), not remembered here: those files are stand-ins, not art, and generate.mjs overwrites them without being asked.',
         assets: present,
         placeholders: stillPlaceholders,
       },
@@ -195,19 +280,16 @@ export function writeIndex(manifest, placeholders = readIndex().placeholders ?? 
   return { present, placeholders: stillPlaceholders };
 }
 
-export function readIndex() {
-  if (!existsSync(INDEX_PATH)) {
-    return { assets: [], placeholders: [] };
+/** Ids of the stand-ins currently on disk, asked of the PNGs and nothing else. */
+export function placeholdersOnDisk() {
+  if (!existsSync(ART_DIR)) {
+    return [];
   }
-  try {
-    const parsed = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
-    return {
-      assets: Array.isArray(parsed.assets) ? parsed.assets : [],
-      placeholders: Array.isArray(parsed.placeholders) ? parsed.placeholders : [],
-    };
-  } catch {
-    return { assets: [], placeholders: [] };
-  }
+  return readdirSync(ART_DIR)
+    .filter((name) => name.endsWith('.png'))
+    .filter((name) => isPlaceholderFile(join(ART_DIR, name)))
+    .map((name) => name.slice(0, -4))
+    .sort();
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +432,6 @@ async function main() {
   console.log(`Баланс PixelLab: ${describeBalance(before)}`);
 
   mkdirSync(ART_DIR, { recursive: true });
-  const placeholders = new Set(readIndex().placeholders);
 
   const planned = [];
   for (const asset of manifest.assets) {
@@ -359,8 +440,10 @@ async function main() {
     }
     const file = join(ART_DIR, `${asset.id}.png`);
     // A stand-in from placeholders.mjs is not art and must never stand between
-    // the owner and a real generation, so it counts as «not there yet».
-    const real = existsSync(file) && !placeholders.has(asset.id);
+    // the owner and a real generation, so it counts as «not there yet». The
+    // answer is read out of the file, so a lost or hand-edited index.json
+    // cannot turn fourteen blobs into fourteen paid-for sprites.
+    const real = existsSync(file) && !isPlaceholderFile(file);
     if (real && !options.force.has(asset.id)) {
       console.log(`· ${asset.id}: уже есть, пропускаю`);
       continue;
@@ -395,7 +478,6 @@ async function main() {
 
   let spent = 0;
   let stoppedAt = null;
-  const generated = new Set();
   for (const asset of planned) {
     if (spent >= options.limit) {
       stoppedAt = asset.id;
@@ -445,7 +527,6 @@ async function main() {
     }
     writeFileSync(join(ART_DIR, `${asset.id}.png`), Buffer.from(image.base64, 'base64'));
     spent += 1;
-    generated.add(asset.id);
     console.log(`ок за ${((Date.now() - startedAt) / 1000).toFixed(1)} с`);
 
     appendLedger({
@@ -469,9 +550,9 @@ async function main() {
     });
   }
 
-  // Anything just generated is real art now, whatever it was before.
-  const stillPlaceholders = [...placeholders].filter((id) => !generated.has(id));
-  const present = writeIndex(manifest, stillPlaceholders).present;
+  // Anything just generated is real art now: the PNG that arrived carries no
+  // mark, so the index writer stops calling it a stand-in on its own.
+  const { present, placeholders: stillPlaceholders } = writeIndex(manifest);
   console.log(`\nСгенерировано за запуск: ${spent}.`);
   console.log(`В content/art/ лежит ${present.length}: ${present.join(', ')}`);
   if (stillPlaceholders.length > 0) {

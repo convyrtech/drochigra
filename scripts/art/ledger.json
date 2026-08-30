@@ -1,0 +1,792 @@
+[
+  {
+    "id": "rock-l1",
+    "at": "2026-08-29T15:43:30.843Z",
+    "seconds": 0,
+    "seed": 19871,
+    "size": {
+      "width": 77,
+      "height": 77
+    },
+    "palette": "l1",
+    "colors": [
+      "#BFE3F0",
+      "#7FB6C9",
+      "#35608C",
+      "#0E2A44",
+      "#E8EDF2",
+      "#8A94A6"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of solid fractured glacier ice, pale blue frozen rock face packed with grit and hairline cracks, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "rock-l2",
+    "at": "2026-08-29T15:43:30.848Z",
+    "seconds": 0,
+    "seed": 19872,
+    "size": {
+      "width": 77,
+      "height": 77
+    },
+    "palette": "l2",
+    "colors": [
+      "#0E3B3B",
+      "#14666B",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#0E2A44",
+      "#8A94A6"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of damp dark teal cavern stone shot through with glowing mint mineral veins, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "rock-l3",
+    "at": "2026-08-29T15:43:30.852Z",
+    "seconds": 0,
+    "seed": 19873,
+    "size": {
+      "width": 77,
+      "height": 77
+    },
+    "palette": "l3",
+    "colors": [
+      "#06222E",
+      "#0B3A4A",
+      "#12617A",
+      "#E8A13C",
+      "#0E2A44",
+      "#B8FFE8"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of near black abyssal seabed rock crusted with shells and hot amber mineral veins, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "tunnel",
+    "at": "2026-08-29T15:43:30.861Z",
+    "seconds": 0,
+    "seed": 19874,
+    "size": {
+      "width": 77,
+      "height": 77
+    },
+    "palette": "abyss",
+    "colors": [
+      "#0A0A0F",
+      "#0E2A44",
+      "#0B3A4A",
+      "#12617A",
+      "#35608C",
+      "#8A94A6"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of an empty excavated mine tunnel, hollow black cavity with a thin rim of broken stone around the edges and loose rubble at the bottom, very dark centre, no objects",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "surface",
+    "at": "2026-08-29T15:43:30.865Z",
+    "seconds": 0,
+    "seed": 19875,
+    "size": {
+      "width": 77,
+      "height": 77
+    },
+    "palette": "surface",
+    "colors": [
+      "#E8EDF2",
+      "#8A94A6",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of a snow covered antarctic mine head deck, riveted steel plating with rust streaks and a bolted rail over packed snow, seen straight on, no objects",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "drill",
+    "at": "2026-08-29T15:43:30.868Z",
+    "seconds": 0,
+    "seed": 19876,
+    "size": {
+      "width": 72,
+      "height": 72
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "compact soviet mining drill pod on caterpillar tracks, boxy yellow steel hull with a rusted conical drill bit pointing right, single lit porthole, side view, whole machine centred",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "dome",
+    "at": "2026-08-29T15:43:30.871Z",
+    "seconds": 0,
+    "seed": 19877,
+    "size": {
+      "width": 210,
+      "height": 28
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "very wide and very low armoured dome of a soviet antarctic station, shallow riveted steel half shell seven times wider than it is tall, warm lit portholes along the rim, snow drift banked against the base, seen straight from the side, whole dome centred and filling the width",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "turret",
+    "at": "2026-08-29T15:43:42.973Z",
+    "seconds": 0,
+    "seed": 19878,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "small soviet automatic defence turret, armoured cupola on a round base with a short twin cannon aimed up and to the right, rust and warning stripes, side view, whole turret centred",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "enemy-aberration",
+    "at": "2026-08-29T15:43:42.978Z",
+    "seconds": 0,
+    "seed": 19879,
+    "size": {
+      "width": 34,
+      "height": 34
+    },
+    "palette": "enemy-l1",
+    "colors": [
+      "#BFE3F0",
+      "#7FB6C9",
+      "#35608C",
+      "#0E2A44",
+      "#C0392B",
+      "#E8EDF2"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "small floating abyss aberration, pale ice blue orb of flesh with one red glowing eye and short trailing tendrils, facing right, whole creature centred",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "dome",
+    "at": "2026-08-29T15:43:43.057Z",
+    "seconds": 0,
+    "seed": 19877,
+    "size": {
+      "width": 210,
+      "height": 28
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "very wide and very low armoured dome of a soviet antarctic station, shallow riveted steel half shell seven times wider than it is tall, warm lit portholes along the rim, snow drift banked against the base, seen straight from the side, whole dome centred and filling the width",
+    "usage": {
+      "usd": 0.02
+    }
+  },
+  {
+    "id": "rock-l1",
+    "at": "2026-08-30T08:47:24.578Z",
+    "seconds": 19.7,
+    "seed": 19871,
+    "size": {
+      "width": 76,
+      "height": 76
+    },
+    "palette": "l1",
+    "colors": [
+      "#BFE3F0",
+      "#7FB6C9",
+      "#35608C",
+      "#0E2A44",
+      "#E8EDF2",
+      "#8A94A6"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of solid fractured glacier ice, pale blue frozen rock face packed with grit and hairline cracks, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "dome",
+    "at": "2026-08-30T08:47:53.107Z",
+    "seconds": 21.1,
+    "seed": 19877,
+    "size": {
+      "width": 210,
+      "height": 28
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "very wide and very low armoured dome of a soviet antarctic station, shallow riveted steel half shell seven times wider than it is tall, warm lit portholes along the rim, snow drift banked against the base, seen straight from the side, whole dome centred and filling the width",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "rock-l2",
+    "at": "2026-08-30T08:48:44.759Z",
+    "seconds": 19.4,
+    "seed": 19872,
+    "size": {
+      "width": 76,
+      "height": 76
+    },
+    "palette": "l2",
+    "colors": [
+      "#0E3B3B",
+      "#14666B",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#0E2A44",
+      "#8A94A6"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of damp dark teal cavern stone shot through with glowing mint mineral veins, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "rock-l3",
+    "at": "2026-08-30T08:49:04.186Z",
+    "seconds": 40.2,
+    "seed": 19873,
+    "size": {
+      "width": 76,
+      "height": 76
+    },
+    "palette": "l3",
+    "colors": [
+      "#06222E",
+      "#0B3A4A",
+      "#12617A",
+      "#E8A13C",
+      "#0E2A44",
+      "#B8FFE8"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of near black abyssal seabed rock crusted with shells and hot amber mineral veins, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "tunnel",
+    "at": "2026-08-30T08:49:44.338Z",
+    "seconds": 15.1,
+    "seed": 19874,
+    "size": {
+      "width": 76,
+      "height": 76
+    },
+    "palette": "abyss",
+    "colors": [
+      "#0A0A0F",
+      "#0E2A44",
+      "#0B3A4A",
+      "#12617A",
+      "#35608C",
+      "#8A94A6"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of an empty excavated mine tunnel, hollow black cavity with a thin rim of broken stone around the edges and loose rubble at the bottom, very dark centre, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "surface",
+    "at": "2026-08-30T08:49:59.401Z",
+    "seconds": 14.8,
+    "seed": 19875,
+    "size": {
+      "width": 76,
+      "height": 76
+    },
+    "palette": "surface",
+    "colors": [
+      "#E8EDF2",
+      "#8A94A6",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "square tile of a snow covered antarctic mine head deck, riveted steel plating with rust streaks and a bolted rail over packed snow, seen straight on, no objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "drill",
+    "at": "2026-08-30T08:50:14.205Z",
+    "seconds": 34.6,
+    "seed": 19876,
+    "size": {
+      "width": 72,
+      "height": 72
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "compact soviet mining drill pod on caterpillar tracks, boxy yellow steel hull with a rusted conical drill bit pointing right, single lit porthole, side view, whole machine centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "dome",
+    "at": "2026-08-30T08:50:48.795Z",
+    "seconds": 30.3,
+    "seed": 19877,
+    "size": {
+      "width": 210,
+      "height": 28
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "extremely wide flattened armoured shell spanning the entire frame from the far left edge to the far right edge, riveted steel plating of a soviet antarctic station, only a very shallow curve rising in the middle, a row of small warm lit portholes running the full width, snow banked along the whole bottom edge, side elevation, no empty space at the left or right, the shell touches both edges",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "turret",
+    "at": "2026-08-30T08:51:19.129Z",
+    "seconds": 19.9,
+    "seed": 19878,
+    "size": {
+      "width": 48,
+      "height": 48
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "small soviet automatic defence turret, armoured cupola on a round base with a short twin cannon aimed up and to the right, rust and warning stripes, side view, whole turret centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "enemy-aberration",
+    "at": "2026-08-30T08:51:39.052Z",
+    "seconds": 22.6,
+    "seed": 19879,
+    "size": {
+      "width": 34,
+      "height": 34
+    },
+    "palette": "enemy-l1",
+    "colors": [
+      "#BFE3F0",
+      "#7FB6C9",
+      "#35608C",
+      "#0E2A44",
+      "#C0392B",
+      "#E8EDF2"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "small floating abyss aberration, pale ice blue orb of flesh with one red glowing eye and short trailing tendrils, facing right, whole creature centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "enemy-drowned",
+    "at": "2026-08-30T08:52:01.660Z",
+    "seconds": 17.3,
+    "seed": 19880,
+    "size": {
+      "width": 40,
+      "height": 40
+    },
+    "palette": "l2",
+    "colors": [
+      "#0E3B3B",
+      "#14666B",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#0E2A44",
+      "#8A94A6"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "hulking drowned horror, bloated waterlogged humanoid hunched forward with heavy shoulders and dripping teal weed, slow and thick, facing right, whole creature centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "enemy-moth",
+    "at": "2026-08-30T08:52:18.916Z",
+    "seconds": 14.5,
+    "seed": 19881,
+    "size": {
+      "width": 36,
+      "height": 36
+    },
+    "palette": "l3",
+    "colors": [
+      "#06222E",
+      "#0B3A4A",
+      "#12617A",
+      "#E8A13C",
+      "#0E2A44",
+      "#B8FFE8"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "fast abyss moth, thin dark body with wide tattered amber wings spread mid beat, long antennae, facing right, whole creature centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "crystal",
+    "at": "2026-08-30T08:53:53.755Z",
+    "seconds": 17.7,
+    "seed": 19882,
+    "size": {
+      "width": 32,
+      "height": 32
+    },
+    "palette": "l3",
+    "colors": [
+      "#06222E",
+      "#0B3A4A",
+      "#12617A",
+      "#E8A13C",
+      "#0E2A44",
+      "#B8FFE8"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "single glowing abyss crystal shard, faceted amber gem on a small dark rock base, bright inner light, whole item centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "scrap",
+    "at": "2026-08-30T08:54:11.435Z",
+    "seconds": 18.1,
+    "seed": 19883,
+    "size": {
+      "width": 32,
+      "height": 32
+    },
+    "palette": "machine",
+    "colors": [
+      "#8A94A6",
+      "#E8EDF2",
+      "#7A4A32",
+      "#C0392B",
+      "#F2C14E",
+      "#0E2A44"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": true
+    },
+    "prompt": "small pile of rusted metal scrap, bent steel plates bolts and a broken pipe stacked together, whole pile centred",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  },
+  {
+    "id": "sky",
+    "at": "2026-08-30T08:54:29.490Z",
+    "seconds": 28.5,
+    "seed": 19884,
+    "size": {
+      "width": 360,
+      "height": 204
+    },
+    "palette": "night-sky",
+    "colors": [
+      "#0A0A0F",
+      "#0E2A44",
+      "#35608C",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#E8EDF2"
+    ],
+    "style": {
+      "outline": "selective outline",
+      "shading": "medium shading",
+      "detail": "medium detail",
+      "view": "side",
+      "text_guidance_scale": 8,
+      "no_background": false
+    },
+    "prompt": "antarctic polar night sky over a distant snow horizon, deep blue gradient with faint green aurora curtains and small cold stars, far away silhouettes of station masts along the bottom edge, empty middle, no foreground objects",
+    "usage": {
+      "type": "generations",
+      "generations": 1
+    }
+  }
+]

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { VIEW } from '../src/game/layout.js';
+import { domeZoneHeight, VIEW } from '../src/game/layout.js';
 import {
   advanceGesture,
   classifyGesture,
@@ -10,7 +10,7 @@ import {
 } from '../src/game/shaftGesture.js';
 
 /** The real screen the scene feeds in: design pixels, dome zone on top. */
-const DOME_HEIGHT = VIEW.height * VIEW.domeHeightShare;
+const DOME_HEIGHT = domeZoneHeight();
 const THRESHOLD = VIEW.dragThreshold;
 /** A row of the shaft, well under the dome zone. */
 const SHAFT_Y = 900;

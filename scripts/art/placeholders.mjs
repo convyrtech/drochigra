@@ -10,9 +10,13 @@
  * palette-correct shapes at exactly the sizes the manifest asks for: right file
  * names, right sizes, right transparency, GDD §16 colours, nothing else.
  *
- * They are marked as placeholders in content/art/index.json, and
- * `scripts/art/generate.mjs` treats a marked file as missing — a stand-in can
- * never stand between the owner and a real generation.
+ * Every stand-in carries the mark **inside the PNG**: a `tEXt` chunk named
+ * `vostok9-placeholder` (`generate.mjs`). That is what `--clean` deletes, what
+ * `--force` redraws, what `content/art/index.json` is written from, and what
+ * makes `generate.mjs` treat the file as missing — a stand-in can never stand
+ * between the owner and a real generation. Marking them in the index instead
+ * would not survive `rm content/art/index.json && npm run art -- --index`:
+ * fourteen blobs would come back as «art» and a fresh key would buy nothing.
  *
  * Usage:
  *   node scripts/art/placeholders.mjs          fill in everything not yet drawn
@@ -25,7 +29,14 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { encodePng, parseHex, readIndex, writeIndex } from './generate.mjs';
+import {
+  encodePng,
+  isPlaceholderFile,
+  parseHex,
+  placeholderChunk,
+  placeholdersOnDisk,
+  writeIndex,
+} from './generate.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
@@ -137,34 +148,45 @@ function main() {
   const clean = argv.includes('--clean');
   const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
   mkdirSync(ART_DIR, { recursive: true });
-  const marked = new Set(readIndex().placeholders);
 
   if (clean) {
+    // Asked of the files, not of the index: whatever the index says, exactly
+    // the marked PNGs go and exactly the unmarked ones stay.
+    const marked = placeholdersOnDisk();
     for (const id of marked) {
       rmSync(join(ART_DIR, `${id}.png`), { force: true });
     }
-    writeIndex(manifest, []);
-    console.log(`Удалено заглушек: ${marked.size}. content/art/ снова чистая.`);
+    const { present } = writeIndex(manifest);
+    console.log(`Удалено заглушек: ${marked.length}${marked.length > 0 ? ` — ${marked.join(', ')}` : ''}.`);
+    console.log(
+      present.length === 0
+        ? 'content/art/ снова чистая.'
+        : `Осталось настоящего арта: ${present.length} — ${present.join(', ')}`,
+    );
     return;
   }
 
   const written = [];
   for (const asset of manifest.assets) {
     const file = join(ART_DIR, `${asset.id}.png`);
-    if (existsSync(file) && !marked.has(asset.id)) {
+    const standIn = isPlaceholderFile(file);
+    if (existsSync(file) && !standIn) {
       console.log(`· ${asset.id}: настоящий арт, не трогаю`);
       continue;
     }
-    if (existsSync(file) && !force) {
+    if (standIn && !force) {
       written.push(asset.id);
       continue;
     }
     const colors = manifest.palettes[asset.palette];
-    writeFileSync(file, encodePng(asset.size.width, asset.size.height, paint(asset, colors), 4));
+    writeFileSync(
+      file,
+      encodePng(asset.size.width, asset.size.height, paint(asset, colors), 4, [placeholderChunk()]),
+    );
     written.push(asset.id);
   }
 
-  writeIndex(manifest, written);
+  writeIndex(manifest);
   console.log(`Заглушек в content/art/: ${written.length} — ${written.join(', ')}`);
   console.log('Это НЕ арт. Удалить: node scripts/art/placeholders.mjs --clean');
 }

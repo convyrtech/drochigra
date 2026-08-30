@@ -1,5 +1,20 @@
 {
-  "_comment": "Written by scripts/art/generate.mjs (and scripts/art/placeholders.mjs). Lists the sprites that exist, so the game never asks for a file that is not there — a 404 is a console error and the e2e smoke test counts those. Ids in `placeholders` are stand-ins, not art: generate.mjs overwrites them without being asked.",
-  "assets": [],
+  "_comment": "Written by scripts/art/generate.mjs (and scripts/art/placeholders.mjs) from what is on disk. Lists the sprites that exist, so the game never asks for a file that is not there — a 404 is a console error and the e2e smoke test counts those. `placeholders` is read back out of the PNGs themselves (a tEXt chunk named vostok9-placeholder), not remembered here: those files are stand-ins, not art, and generate.mjs overwrites them without being asked.",
+  "assets": [
+    "crystal",
+    "dome",
+    "drill",
+    "enemy-aberration",
+    "enemy-drowned",
+    "enemy-moth",
+    "rock-l1",
+    "rock-l2",
+    "rock-l3",
+    "scrap",
+    "sky",
+    "surface",
+    "tunnel",
+    "turret"
+  ],
   "placeholders": []
 }

@@ -4,6 +4,8 @@ import type { ShiftState } from '../sim/shift.js';
 import { ART, hasArt } from './artTextures.js';
 import {
   COLORS,
+  corridorLaneY,
+  domeCrownY,
   enemyBarOffset,
   ENEMY_STYLE,
   ENEMY_STYLE_FALLBACK,
@@ -23,9 +25,15 @@ import {
  * Every drawn thing here has two forms and picks one **once**, at build time,
  * from whether its sprite was generated (`artTextures.ts`): the shell is either
  * a sprite or the arc it always was, the turret either a sprite or the yellow
- * block, each enemy either a sprite or its circle/square/triangle. They are
- * independent — a shell with no turret sprite, or two enemies out of three, is a
- * normal state and draws correctly.
+ * block, each enemy either a sprite or its circle/square/triangle.
+ *
+ * They are independent, and the mixed states are the ones to get right: `dome`
+ * and `turret` are neighbours in the manifest, so «shell bought, turret not» is
+ * exactly where a key runs out. What makes it draw right is that neither half
+ * reads the other's number — the block and the beam are put on `domeCrownY`,
+ * the roof of whichever shell is actually there, instead of on the arc's apex.
+ * Read the apex for both and the block ends up buried inside the sprite's roof
+ * with the beams starting under it, which is what this file used to do.
  */
 export interface DomeView {
   readonly update: (state: ShiftState) => void;
@@ -74,11 +82,13 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
         .setScrollFactor(0)
         .setDepth(depth)
     : null;
-  /** Where a beam leaves the station: the sprite's muzzle, or the bare apex. */
-  const muzzleY = turretArt ? dome.muzzleY : dome.apexY;
+  /** The roof of the station as drawn: the sprite's, or the bare arc's. */
+  const crownY = domeCrownY(shellArt !== null);
+  /** Where a beam leaves the station: the sprite's muzzle, or the block on the roof. */
+  const muzzleY = turretArt ? dome.muzzleY : crownY;
 
   const shell = scene.add.graphics().setScrollFactor(0).setDepth(depth);
-  drawShell(shell, centerX, { arc: shellArt === null, turret: turretArt === null });
+  drawShell(shell, centerX, { arc: shellArt === null, turret: turretArt === null, crownY });
 
   const fight = scene.add.graphics().setScrollFactor(0).setDepth(depth);
   const frame = scene.add.graphics().setScrollFactor(0).setDepth(frameDepth);
@@ -112,11 +122,10 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
 
     const fromX = enemy.side === 'left' ? dome.edgeMargin : width - dome.edgeMargin;
     const toX = enemy.side === 'left' ? centerX - dome.centerGap : centerX + dome.centerGap;
-    const laneHeight = dome.corridorBottom - dome.corridorTop;
     return {
       id: enemy.id,
       x: fromX + (toX - fromX) * progress,
-      y: dome.corridorTop + (laneHeight * (lane + 0.5)) / dome.lanes,
+      y: corridorLaneY(lane),
     };
   }
 
@@ -231,7 +240,7 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
           shellArt.clearTint();
         }
       } else if (domeFlashSec > 0) {
-        drawShell(shell, centerX, { arc: true, turret: turretArt === null }, true);
+        drawShell(shell, centerX, { arc: true, turret: turretArt === null, crownY }, true);
       }
 
       frame.clear();
@@ -272,6 +281,8 @@ export function createDomeView(scene: Phaser.Scene, options: DomeViewOptions): D
 interface ShellParts {
   readonly arc: boolean;
   readonly turret: boolean;
+  /** The roof the block turret stands on — the sprite's or the arc's own. */
+  readonly crownY: number;
 }
 
 /**
@@ -313,10 +324,12 @@ function drawShell(
   }
 
   if (parts.turret) {
+    // On the roof that is really there. With a shell sprite that is the top of
+    // the sprite, not `apexY` — otherwise the block is drawn inside the dome.
     shell.fillStyle(COLORS.drill, 1);
     shell.fillRect(
       centerX - dome.turretWidth / 2,
-      dome.apexY - dome.turretHeight,
+      parts.crownY - dome.turretHeight,
       dome.turretWidth,
       dome.turretHeight,
     );

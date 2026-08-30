@@ -54,10 +54,10 @@ export const VIEW = {
    * PLAN_V1 §3 asks for about a third: the zone has to hold the timer, the
    * enemy corridor, the dome, two bars and two buttons.
    */
-  domeHeightShare: 0.32,
+  domeHeightShare: 0.31875,
 
   /** Gap between cells, in pixels. */
-  cellGap: 3,
+  cellGap: 4,
   /** Where the surface label sits inside the entrance row, as a share of a cell. */
   surfaceLabelYShare: 0.28,
   /** Drill size as a share of a cell, as the plain rectangle. */
@@ -66,8 +66,13 @@ export const VIEW = {
    * Drill size as a share of a cell once there is a sprite to draw. A
    * machine needs more room than a marker: the rectangle only had to be
    * seen, the drill has to be recognised.
+   *
+   * 0.9 and not 0.88 for one reason: a cell is 720/9 = 80 pixels, so this share
+   * is what the sprite is actually stretched to. 0.88 asked for 70.4 — a
+   * fraction of a pixel, which no whole sprite can ever be — and 0.9 asks for a
+   * flat 72, which the manifest generates at exactly 72×72.
    */
-  drillArtSizeShare: 0.88,
+  drillArtSizeShare: 0.9,
   /** Height of the dig progress bar as a share of a cell. */
   digBarHeightShare: 0.16,
   /**
@@ -103,7 +108,7 @@ export const VIEW = {
      * and two numbers say what «СДАНО: 115 · КРИСТАЛЛЫ: 1» says, in half the
      * width of a phone screen; with no icons the words come back.
      */
-    statIconSize: 28,
+    statIconSize: 32,
     statIconGap: 8,
     /**
      * Two dark bands laid over the sky sprite, so the text keeps its contrast
@@ -140,12 +145,24 @@ export const VIEW = {
   /** The dome shell, the corridor the enemies walk down and the alarm frame. */
   dome: {
     corridorTop: 100,
-    corridorBottom: 204,
+    /**
+     * The corridor ends here and not lower, because the roof of the station is
+     * at `apexY`: the deepest of the three lanes plus a sprite-sized creature
+     * plus its health bar has to finish above it. At 204 the bottom lane ran at
+     * y 186.7 and its bar ended at 214.7 — inside the shell, whichever form the
+     * shell took. `tests/art.test.ts` holds the sum.
+     */
+    corridorBottom: 190,
     /** Rows enemies of one wave are spread over, so they do not stack up. */
     lanes: 3,
     /** Each further row of a side starts this much of the way further back. */
     rankShift: 0.1,
-    /** Turret muzzle: the top of the shell and the point every beam starts at. */
+    /**
+     * The crown of the bare arc: the top of the shell, what the turret block
+     * stands on and where a beam starts when there is no turret sprite. The
+     * shell **sprite** has its own crown — `baseY - artHeight`, two pixels
+     * higher — and `domeCrownY` is the one place that picks between them.
+     */
     apexY: 210,
     /** Where the shell meets the ground on both sides. */
     baseY: 264,
@@ -166,26 +183,36 @@ export const VIEW = {
      * so the zone measures 2 × 48 = 96 design pixels across, comfortably over
      * the MIN_TOUCH of 88 (≈ 52 CSS pixels on the reference screen). It is left
      * where it is: growing it further would start stealing taps between the
-     * three lanes of the corridor, which are only ~35 design pixels apart.
+     * three lanes of the corridor, which are only ~30 design pixels apart.
      */
     pickRadius: 48,
     beamWidth: 3,
     frameWidth: 10,
     /**
      * The shell sprite, when there is one: as wide as the drawn arc and
-     * anchored bottom-centre on `baseY`, so it stands exactly where the arc
-     * stood. Without the sprite none of these three are read at all and the arc
-     * is drawn as before.
+     * anchored bottom-centre on `baseY`, so it stands where the arc stood — and
+     * just as low. 88 put its roof at y 176, thirty-four pixels above the arc
+     * and straight into the enemy corridor: the bottom lane ran *inside* the
+     * sprite for the whole of its walk. 56 puts the roof back at 208, level
+     * with the apex of the arc it replaces, and 420 × 56 is the 7.5:1 the
+     * manifest now generates (210 × 28, doubled).
      */
-    artHeight: 88,
-    /** The turret sprite: square, centred here on the crown of the shell. */
-    turretArtSize: 56,
-    turretArtY: 182,
+    artHeight: 56,
     /**
-     * Where a beam starts once the turret is a sprite — its muzzle, which is
-     * higher than the apex of the bare arc. The arc keeps `apexY`.
+     * The turret sprite: square, centred here, seated a few pixels into the
+     * crown so it reads as mounted and not as floating. 48 and not 56 because
+     * the manifest draws it at 48 × 48 — at 56 every pixel was stretched by
+     * 7/6 and the cupola came out as tall as the whole dome.
      */
-    muzzleY: 164,
+    turretArtSize: 48,
+    turretArtY: 188,
+    /**
+     * Where a beam starts once the turret is a sprite — its muzzle, twelve
+     * pixels below the top of the sprite and well above the crown. With no
+     * turret sprite the beam starts at the crown itself (`domeCrownY`), which
+     * is where the yellow block sits.
+     */
+    muzzleY: 176,
     /** One full pulse of the alarm frame, in seconds. */
     framePulseSec: 1.1,
   },
@@ -379,6 +406,43 @@ export const VIEW = {
     poolSize: 6,
   },
 } as const;
+
+/**
+ * Height of the dome zone, in whole design pixels.
+ *
+ * Rounded on purpose. The share gives 1280 × 0.32 = 409.6, and the sky sprite
+ * is stretched across the whole zone: at 409.6 a 205-pixel-tall picture is
+ * resampled by 1.998 and every second row of it is a blend of two. At 410 it is
+ * doubled exactly, which is what NEAREST is for.
+ */
+export function domeZoneHeight(height: number = VIEW.height): number {
+  return Math.round(height * VIEW.domeHeightShare);
+}
+
+/**
+ * The middle of one corridor lane, counted from the top of the dome zone. Lane
+ * 0 is the far one, `VIEW.dome.lanes - 1` the one nearest the station.
+ */
+export function corridorLaneY(lane: number): number {
+  const dome = VIEW.dome;
+  return dome.corridorTop + ((dome.corridorBottom - dome.corridorTop) * (lane + 0.5)) / dome.lanes;
+}
+
+/**
+ * The top of the station as it is actually drawn — the roof the turret stands
+ * on, the point a beam leaves from when the turret is a block, and the line the
+ * enemy corridor has to finish above.
+ *
+ * Two forms, one number. The bare arc peaks at `apexY`; the shell sprite is
+ * anchored on `baseY` and reaches `artHeight` up. Reading `apexY` for both was
+ * the bug behind the ugliest half-generated state there is — `dome` bought,
+ * `turret` not, the two being neighbours in the manifest — where the yellow
+ * block turret was drawn *inside* the roof of the sprite and the beams started
+ * inside it too.
+ */
+export function domeCrownY(hasShellSprite: boolean): number {
+  return hasShellSprite ? VIEW.dome.baseY - VIEW.dome.artHeight : VIEW.dome.apexY;
+}
 
 /** A hit zone in the local coordinates of the thing it belongs to. */
 export interface HitArea {

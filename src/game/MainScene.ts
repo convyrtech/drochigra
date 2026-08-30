@@ -52,7 +52,14 @@ import {
   type GestureKind,
   type GestureSample,
 } from './shaftGesture.js';
-import { COLORS, cssColor, elevatorBandHeight, FONT_FAMILY, VIEW } from './layout.js';
+import {
+  COLORS,
+  cssColor,
+  domeZoneHeight,
+  elevatorBandHeight,
+  FONT_FAMILY,
+  VIEW,
+} from './layout.js';
 import { browserStore, loadProfile, saveProfile } from './saveStorage.js';
 import { SFX } from './sfx.js';
 import { createChipPool, type ChipPool } from '../ui/particles.js';
@@ -215,7 +222,7 @@ export class MainScene extends Phaser.Scene {
     // `pixelArt: true`, which would also coarsen the text.
     sharpenArt(this, this.art);
     const { height } = this.scale.gameSize;
-    this.domeHeight = height * VIEW.domeHeightShare;
+    this.domeHeight = domeZoneHeight(height);
     this.state = null;
     this.cellRects = [];
     this.cellTiles = [];

@@ -1,5 +1,5 @@
 {
-  "_comment": "Sprite sheet of ВОСТОК-9. One entry per PNG in content/art/. Ids are file names without the extension; the game looks them up through content/art/index.json, which generate.mjs writes. Order is priority order — the generator walks the list top to bottom and stops cleanly when the key runs out of generations, so the cells (70% of the screen) are always paid for first.",
+  "_comment": "Sprite sheet of ВОСТОК-9. One entry per PNG in content/art/. Ids are file names without the extension; the game looks them up through content/art/index.json, which generate.mjs writes. Order is priority order — the generator walks the list top to bottom and stops cleanly when the key runs out of generations, so the cells (70% of the screen) are always paid for first. Every `size` here is the size the sprite is DRAWN at in design pixels, or an exact whole fraction of it: NEAREST scaling by 1.203 duplicates rows unevenly and scaling by 0.875 throws four rows out of thirty-two. tests/art.test.ts holds every one of those sums against src/game/layout.ts.",
   "style": {
     "_comment": "One style for every asset: a mixed set of sprites looks worse than honest rectangles. Do not vary these per asset.",
     "outline": "selective outline",
@@ -9,7 +9,7 @@
     "text_guidance_scale": 8
   },
   "palettes": {
-    "_comment": "GDD_VOSTOK9.md §16, one group per layer plus the surface and the machines. Every request sends the group as a forced palette (color_image), which is what keeps the set together.",
+    "_comment": "GDD_VOSTOK9.md §16, one group per layer plus the surface, the machines and the polar night. Every request sends the group as a forced palette (color_image), which is what keeps the set together — and which is why a prompt may never ask for a colour its own group does not hold: the generator physically cannot paint it. tests/art.test.ts checks every colour against §16.",
     "surface": [
       "#E8EDF2",
       "#8A94A6",
@@ -17,6 +17,14 @@
       "#C0392B",
       "#F2C14E",
       "#0E2A44"
+    ],
+    "night-sky": [
+      "#0A0A0F",
+      "#0E2A44",
+      "#35608C",
+      "#2FB8A6",
+      "#B8FFE8",
+      "#E8EDF2"
     ],
     "l1": [
       "#BFE3F0",
@@ -73,8 +81,8 @@
       "group": "cells",
       "palette": "l1",
       "size": {
-        "width": 64,
-        "height": 64
+        "width": 76,
+        "height": 76
       },
       "seed": 19871,
       "prompt": "square tile of solid fractured glacier ice, pale blue frozen rock face packed with grit and hairline cracks, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects"
@@ -84,8 +92,8 @@
       "group": "cells",
       "palette": "l2",
       "size": {
-        "width": 64,
-        "height": 64
+        "width": 76,
+        "height": 76
       },
       "seed": 19872,
       "prompt": "square tile of damp dark teal cavern stone shot through with glowing mint mineral veins, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects"
@@ -95,8 +103,8 @@
       "group": "cells",
       "palette": "l3",
       "size": {
-        "width": 64,
-        "height": 64
+        "width": 76,
+        "height": 76
       },
       "seed": 19873,
       "prompt": "square tile of near black abyssal seabed rock crusted with shells and hot amber mineral veins, flat front-facing mine wall, edge to edge texture, no sky, no ground line, no objects"
@@ -106,8 +114,8 @@
       "group": "cells",
       "palette": "abyss",
       "size": {
-        "width": 64,
-        "height": 64
+        "width": 76,
+        "height": 76
       },
       "seed": 19874,
       "prompt": "square tile of an empty excavated mine tunnel, hollow black cavity with a thin rim of broken stone around the edges and loose rubble at the bottom, very dark centre, no objects"
@@ -117,8 +125,8 @@
       "group": "cells",
       "palette": "surface",
       "size": {
-        "width": 64,
-        "height": 64
+        "width": 76,
+        "height": 76
       },
       "seed": 19875,
       "prompt": "square tile of a snow covered antarctic mine head deck, riveted steel plating with rust streaks and a bolted rail over packed snow, seen straight on, no objects"
@@ -128,8 +136,8 @@
       "group": "drill",
       "palette": "machine",
       "size": {
-        "width": 48,
-        "height": 48
+        "width": 72,
+        "height": 72
       },
       "seed": 19876,
       "no_background": true,
@@ -140,12 +148,12 @@
       "group": "dome",
       "palette": "machine",
       "size": {
-        "width": 320,
-        "height": 80
+        "width": 210,
+        "height": 28
       },
       "seed": 19877,
       "no_background": true,
-      "prompt": "very wide and very low armoured dome of a soviet antarctic station, shallow riveted steel half shell four times wider than it is tall, warm lit portholes along the rim, snow drift banked against the base, seen straight from the side, whole dome centred and filling the width"
+      "prompt": "extremely wide flattened armoured shell spanning the entire frame from the far left edge to the far right edge, riveted steel plating of a soviet antarctic station, only a very shallow curve rising in the middle, a row of small warm lit portholes running the full width, snow banked along the whole bottom edge, side elevation, no empty space at the left or right, the shell touches both edges"
     },
     {
       "id": "turret",
@@ -164,8 +172,8 @@
       "group": "enemies",
       "palette": "enemy-l1",
       "size": {
-        "width": 32,
-        "height": 32
+        "width": 34,
+        "height": 34
       },
       "seed": 19879,
       "no_background": true,
@@ -176,8 +184,8 @@
       "group": "enemies",
       "palette": "l2",
       "size": {
-        "width": 32,
-        "height": 32
+        "width": 40,
+        "height": 40
       },
       "seed": 19880,
       "no_background": true,
@@ -188,8 +196,8 @@
       "group": "enemies",
       "palette": "l3",
       "size": {
-        "width": 32,
-        "height": 32
+        "width": 36,
+        "height": 36
       },
       "seed": 19881,
       "no_background": true,
@@ -222,10 +230,10 @@
     {
       "id": "sky",
       "group": "ui",
-      "palette": "surface",
+      "palette": "night-sky",
       "size": {
         "width": 360,
-        "height": 205
+        "height": 204
       },
       "seed": 19884,
       "prompt": "antarctic polar night sky over a distant snow horizon, deep blue gradient with faint green aurora curtains and small cold stars, far away silhouettes of station masts along the bottom edge, empty middle, no foreground objects"

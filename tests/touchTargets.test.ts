@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import balanceJson from '../content/balance.json' with { type: 'json' };
 import {
+  domeZoneHeight,
   elevatorBandHeight,
   hudButtonHitZone,
   MIN_TOUCH,
@@ -61,7 +62,7 @@ describe('the minimum touch target', () => {
 });
 
 describe('every zone the player taps', () => {
-  const domeHeight = VIEW.height * VIEW.domeHeightShare;
+  const domeHeight = domeZoneHeight();
   const rowWidth = VIEW.width - VIEW.base.margin * 2;
   const hudButtonWidth = (VIEW.width - VIEW.hud.margin * 2 - VIEW.hud.buttonGap) / 2;
   const chipWidth =
@@ -104,7 +105,7 @@ describe('every zone the player taps', () => {
 });
 
 describe('the HUD touch zone', () => {
-  const domeHeight = VIEW.height * VIEW.domeHeightShare;
+  const domeHeight = domeZoneHeight();
   const zone = hudButtonHitZone(domeHeight);
 
   it('stays inside the dome panel, so a tap on the shaft is never a salvo', () => {
