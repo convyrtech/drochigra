@@ -19,12 +19,50 @@ TypeScript + Phaser 3 + Vite. Сборка — статика: площадка 
 
 ```
 docs/            GDD_VOSTOK9.md, PLAN_V1.md
-content/         balance.json — все игровые числа
+content/         balance.json — все игровые числа; publicDir, попадает в dist/ как есть
 src/sim/         чистая логика без графики, покрыта тестами
 src/game/        сцены и отрисовка Phaser
 src/ui/          интерфейс, кнопки, экраны
 tests/           vitest
 ```
+
+## Чужой файл в репозитории: `content/telegram-web-app.js`
+
+Единственный вендоренный файл. Это **побайтовая копия** официального скрипта Telegram Mini App —
+фолбэк на случай, когда `telegram.org` недоступен, а сам Telegram работает (issue #17; для
+русскоязычной аудитории это рядовой сценарий).
+
+| | |
+|---|---|
+| Откуда | `https://telegram.org/js/telegram-web-app.js?63` |
+| Когда снят | 2026-08-31 |
+| `last-modified` у telegram.org | Tue, 14 Jul 2026 09:31:36 GMT |
+| Размер | 116510 байт, чистый ASCII, LF |
+| sha256 | `3549138a7934039fe7dfd1291a4ee739bd2b705a614308053a8b08a87d85c451` |
+
+**Не редактировать.** Любая правка ломает `tests/tg.test.ts` → «the vendored copy of
+telegram-web-app.js»: там пришпилены длина и FNV-1a (`32ec566c`). Это не защита от Telegram,
+а защита от обрезанного файла и от тихой подмены — обновление копии обязано быть осознанным
+действием с новым числом в тесте и новой строкой в этой таблице.
+
+**Как обновить** (прокси съедает и curl, и Playwright — снимать переменные):
+
+```
+env -u ALL_PROXY -u all_proxy -u HTTPS_PROXY -u https_proxy \
+  curl -sS -D- https://telegram.org/js/telegram-web-app.js?63 -o content/telegram-web-app.js
+sha256sum content/telegram-web-app.js
+node -e 'const s=require("fs").readFileSync("content/telegram-web-app.js","utf8");
+  let h=0x811c9dc5; for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0;}
+  console.log(s.length, h.toString(16).padStart(8,"0"));'
+```
+
+Дальше — новые числа в `tests/tg.test.ts` и в таблицу выше, дату сюда же.
+
+**Насколько срочно обновлять.** Не срочно, и это осознанно: удалённая копия по-прежнему грузится
+**первой**, так что у игрока с доступом к `telegram.org` версия скрипта обновляется сама, как
+раньше. Устаревшая локальная копия хуже свежей, но несравнимо лучше её отсутствия — она работает
+ровно там, где иначе не работало бы ничего. Разумный повод пересмотреть: Telegram поднял Bot API
+и игра начала звать метод, которого в копии нет (`SINCE` в `src/game/tg.ts`).
 
 ## Жёсткие правила
 

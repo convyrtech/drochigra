@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+// The vendored fallback copy, read as text. `?raw` and not `node:fs`: this
+// repository has no `@types/node` (see tests/art.test.ts), and the file is pure
+// ASCII, so the UTF-8 decode is lossless.
+import vendored from '../content/telegram-web-app.js?raw';
 import {
   applyTgTheme,
   disableVerticalSwipes,
@@ -623,11 +627,13 @@ describe('the official script never holds up the game (issue #16)', () => {
     expect(calls.filter((call) => call === 'lockOrientation')).toEqual(['lockOrientation']);
   });
 
-  it('stays quiet when the request fails, and the game is none the wiser', () => {
+  it('stays quiet when both requests fail, and the game is none the wiser', () => {
     const dom = withDom(null, (fake) => {
       startTg();
       expect(() => {
-        fake.failScript();
+        // telegram.org refuses, then the copy we ship is missing too.
+        fake.failScript(REMOTE);
+        fake.failScript(LOCAL);
       }).not.toThrow();
       // A tap after the failure must not reach a client that is not there.
       fake.tap();
@@ -636,6 +642,363 @@ describe('the official script never holds up the game (issue #16)', () => {
     expect(dom.root.style).toEqual({});
   });
 });
+
+/** Index of each request in `dom.scripts`, in the order the module makes them. */
+const REMOTE = 0;
+const LOCAL = 1;
+
+/** Telegram's own copy, still the one asked for first. */
+const SCRIPT_URL = 'https://telegram.org/js/telegram-web-app.js?63';
+
+/** Where the copy the game ships with is served from. */
+const LOCAL_URL = `${import.meta.env.BASE_URL}telegram-web-app.js`;
+
+/**
+ * Issue #17, the other side of #16. The game no longer waits for telegram.org —
+ * but the whole Telegram wiring lives in the script that host serves, so with
+ * the host blocked the client got **nothing**: no `ready`, no `expand`, and no
+ * `disableVerticalSwipes`, which hands the one gesture of the game
+ * (`PLAN_V1` §3) back to Telegram, where a downward swipe closes the Mini App.
+ * `GOAL_V1` condition 2 rolled back silently.
+ *
+ * And «telegram.org is unreachable» is not «Telegram is unreachable»: for a
+ * Russian-speaking audience the domain has been blocked while the app itself
+ * kept working, so this is an ordinary launch, not an exotic one.
+ *
+ * The answer is a fallback, not a replacement: telegram.org stays first so the
+ * script keeps updating itself, and the copy in `content/` is asked for only
+ * when that host refuses or says nothing for `REMOTE_GRACE_MS`.
+ */
+describe('the fallback copy of the script (issue #17)', () => {
+  const hash = { hash: '#tgWebAppVersion=8.0&tgWebAppPlatform=android' };
+  /** What a client hears when a copy of the script finally lands. */
+  const FULL_WIRING = [
+    'ready',
+    'expand',
+    'disableVerticalSwipes',
+    'setBackgroundColor:#05070d',
+    'setHeaderColor:#05070d',
+    'setBottomBarColor:#05070d',
+  ];
+
+  it('asks telegram.org first and nothing else while that request is open', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    }, hash);
+    expect(dom.scripts.map((script) => script.src)).toEqual([SCRIPT_URL]);
+    // …with a clock running behind it, because a blocked host never answers.
+    expect(dom.waits).toEqual([2500]);
+  });
+
+  it('asks for the local copy the moment telegram.org refuses', () => {
+    const dom = withDom(null, (fake) => {
+      startTg();
+      fake.failScript(REMOTE);
+    }, hash);
+    expect(dom.scripts.map((script) => script.src)).toEqual([SCRIPT_URL, LOCAL_URL]);
+    expect(dom.scripts[LOCAL]?.async).toBe(true);
+    // A refusal is an answer, so there is nothing left to wait for.
+    expect(dom.pending()).toBe(0);
+  });
+
+  /**
+   * The case the fallback exists for. A blocked host does not refuse — it
+   * swallows the connection, `onerror` never fires, and only the clock ends it.
+   */
+  it('asks for the local copy when telegram.org just never answers', () => {
+    const dom = withDom(null, (fake) => {
+      startTg();
+      expect(fake.scripts).toHaveLength(1);
+      fake.fireTimers();
+    }, hash);
+    expect(dom.scripts.map((script) => script.src)).toEqual([SCRIPT_URL, LOCAL_URL]);
+  });
+
+  /**
+   * And the whole point of it: the client must end up hearing exactly what it
+   * hears when telegram.org is reachable — `ready`, `expand` and the swipe.
+   */
+  it('gives the client the whole wiring off the local copy', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    const dom = withDom(null, (fake) => {
+      startTg();
+      fake.fireTimers();
+      expect(calls).toEqual([]);
+      fake.deliverScript(app, LOCAL);
+    }, hash);
+    expect(calls).toEqual(FULL_WIRING);
+    // The viewport binding rides along, as it does on the remote path.
+    expect(dom.game.style.height).toBe(
+      'calc(var(--tg-viewport-stable-height, 100vh) - var(--safe-top, 0px) - var(--safe-bottom, 0px))',
+    );
+    expect(dom.root.style.colorScheme).toBe('dark');
+  });
+
+  /** The late-script path of issue #16, reached through the fallback instead. */
+  it('takes the screen at once when the player tapped before the local copy landed', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    withDom(null, (fake) => {
+      startTg();
+      fake.tap();
+      fake.fireTimers();
+      fake.deliverScript(app, LOCAL);
+    }, hash);
+    expect(calls).toEqual([
+      'ready',
+      'expand',
+      'disableVerticalSwipes',
+      'requestFullscreen',
+      'lockOrientation',
+      'setBackgroundColor:#05070d',
+      'setHeaderColor:#05070d',
+      'setBottomBarColor:#05070d',
+    ]);
+  });
+
+  it('still waits for the first tap when the local copy beat the player to it', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    withDom(null, (fake) => {
+      startTg();
+      fake.fireTimers();
+      fake.deliverScript(app, LOCAL);
+      calls.length = 0;
+      fake.tap();
+    }, hash);
+    expect(calls).toEqual(['requestFullscreen', 'lockOrientation']);
+  });
+
+  /*
+   * Both requests can be open at once — the clock starts the local copy without
+   * cancelling the remote one on purpose, because aborting a merely slow
+   * request would throw away the last copy if the local one were missing from
+   * the deploy. So both arriving is an ordinary launch, not an exotic one: it
+   * happens every time telegram.org takes longer than the grace, which is what
+   * a throttled host looks like as opposed to a blocked one.
+   *
+   * Two things then have to be true at once, and they pull in opposite
+   * directions. `ready()`, `expand()` and the first-tap listener must happen
+   * exactly once whatever the order. The **colours** must not: running the
+   * official script re-posts the player's own themeParams at the client, so a
+   * second copy that is left alone makes the player's light theme the last word
+   * on the chrome — a white frame around a dark game, which is the bug
+   * `applyTgTheme` exists to stop and `GOAL_V1` condition 2 rules out.
+   *
+   * Both orders are checked, and what is asserted is the **last** colour the
+   * client heard, not that a colour was sent at all: sending ours and then
+   * being overpainted passes the second test and fails the player.
+   *
+   * The guard is what is tested here, not the browser's willingness to abort a
+   * tag: the late copy below is delivered by hand precisely because nothing may
+   * depend on it never running.
+   */
+
+  /** The last thing the client heard about one colour, or nothing. */
+  function lastColour(log: readonly string[], call: string): string | undefined {
+    return [...log].reverse().find((entry) => entry.startsWith(`${call}:`));
+  }
+
+  /** Every wiring step that must survive a second arrival exactly once. */
+  function onceEach(log: readonly string[]): Record<string, number> {
+    const counted: Record<string, number> = {};
+    for (const step of ['ready', 'expand', 'disableVerticalSwipes', 'requestFullscreen', 'lockOrientation']) {
+      counted[step] = log.filter((entry) => entry === step).length;
+    }
+    return counted;
+  }
+
+  for (const [order, first, second] of [
+    ['telegram.org answers after the local copy', LOCAL, REMOTE],
+    ['the local copy answers after telegram.org', REMOTE, LOCAL],
+  ] as const) {
+    it(`says our colour last when ${order}`, () => {
+      // One log: two WebApp objects, but one client on the other end.
+      const heard: string[] = [];
+      const winner = fakeApp({ version: '8.0', log: heard, ownTheme: '#ffffff' });
+      const late = fakeApp({ version: '8.0', log: heard, ownTheme: '#ffffff' });
+      withDom(null, (fake) => {
+        startTg();
+        fake.fireTimers();
+        // The script executes — posting the player's own theme — and then the
+        // tag's load event fires. That is the browser's order, both times.
+        winner.runScript();
+        fake.deliverScript(winner.app, first);
+        expect(lastColour(heard, 'setBackgroundColor')).toBe('setBackgroundColor:#05070d');
+        late.runScript();
+        fake.deliverScript(late.app, second);
+      }, hash);
+
+      expect(lastColour(heard, 'setBackgroundColor')).toBe('setBackgroundColor:#05070d');
+      expect(lastColour(heard, 'setHeaderColor')).toBe('setHeaderColor:#05070d');
+      expect(lastColour(heard, 'setBottomBarColor')).toBe('setBottomBarColor:#05070d');
+      // …and nothing else was done a second time.
+      expect(onceEach(heard)).toEqual({
+        ready: 1,
+        expand: 1,
+        disableVerticalSwipes: 1,
+        requestFullscreen: 0,
+        lockOrientation: 0,
+      });
+    });
+
+    it(`still takes the screen only once when ${order}`, () => {
+      const heard: string[] = [];
+      const winner = fakeApp({ version: '8.0', log: heard, ownTheme: '#ffffff' });
+      const late = fakeApp({ version: '8.0', log: heard, ownTheme: '#ffffff' });
+      withDom(null, (fake) => {
+        startTg();
+        fake.tap();
+        fake.fireTimers();
+        winner.runScript();
+        fake.deliverScript(winner.app, first);
+        late.runScript();
+        fake.deliverScript(late.app, second);
+        // A tap after both have landed must not find a second listener either.
+        fake.tap();
+      }, hash);
+      expect(onceEach(heard)).toEqual({
+        ready: 1,
+        expand: 1,
+        disableVerticalSwipes: 1,
+        requestFullscreen: 1,
+        lockOrientation: 1,
+      });
+      expect(lastColour(heard, 'setBackgroundColor')).toBe('setBackgroundColor:#05070d');
+    });
+  }
+
+  /**
+   * The other half of «asked, not assumed»: a copy that executed and left no
+   * WebApp object behind. On Pages a missing file is an honest 404, but a host
+   * that answers 200 with an HTML error page makes the tag fire `load`, and
+   * counting that as the answer would leave the good copy still in flight
+   * ignored — measured as zero events reaching the client.
+   */
+  it('lets the other copy win when the first one runs but defines nothing', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    withDom(null, (fake) => {
+      startTg();
+      fake.fireTimers();
+      // The local copy «loads»: the tag fires load, but nothing was defined.
+      fake.scripts[LOCAL]?.onload?.();
+      expect(calls).toEqual([]);
+      // telegram.org turns up afterwards with the real thing.
+      fake.deliverScript(app, REMOTE);
+    }, hash);
+    expect(calls).toEqual(FULL_WIRING);
+  });
+
+  it('keeps watching for the tap while a copy that defined nothing is discarded', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    withDom(null, (fake) => {
+      startTg();
+      fake.fireTimers();
+      fake.scripts[LOCAL]?.onload?.();
+      // The player taps after the empty response and before the real one.
+      fake.tap();
+      fake.deliverScript(app, REMOTE);
+    }, hash);
+    expect(calls).toContain('requestFullscreen');
+    expect(calls).toContain('lockOrientation');
+  });
+
+  it('never asks for the local copy when telegram.org answers in time', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    const dom = withDom(null, (fake) => {
+      startTg();
+      fake.deliverScript(app, REMOTE);
+      // The clock is stopped by the arrival, so nothing fires later.
+      expect(fake.pending()).toBe(0);
+      fake.fireTimers();
+    }, hash);
+    expect(dom.scripts.map((script) => script.src)).toEqual([SCRIPT_URL]);
+    expect(calls).toEqual(FULL_WIRING);
+  });
+
+  /**
+   * Outside Telegram neither copy is asked for. The remote one was issue #16;
+   * the local one is cheap and same-origin, but it is still a request, still
+   * 114 KB, and still buys nothing — with no launch parameters the script only
+   * leaves its «6.0» stub with an empty session.
+   */
+  it('asks for neither copy in a plain browser', () => {
+    const dom = withDom(null, (fake) => {
+      startTg();
+      fake.fireTimers();
+    });
+    expect(dom.scripts).toEqual([]);
+    expect(dom.waits).toEqual([]);
+  });
+
+  it('gives up only when both copies are gone, not when the first one is', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    withDom(null, (fake) => {
+      startTg();
+      // The local copy 404s while telegram.org is still hanging: the tap watch
+      // must stay armed, because the remote one can still arrive.
+      fake.fireTimers();
+      fake.failScript(LOCAL);
+      fake.tap();
+      fake.deliverScript(app, REMOTE);
+    }, hash);
+    expect(calls).toEqual([
+      'ready',
+      'expand',
+      'disableVerticalSwipes',
+      // The tap happened while both were in flight, so the takeover is done on
+      // the spot rather than waited for a second time.
+      'requestFullscreen',
+      'lockOrientation',
+      'setBackgroundColor:#05070d',
+      'setHeaderColor:#05070d',
+      'setBottomBarColor:#05070d',
+    ]);
+  });
+});
+
+/**
+ * The copy in `content/telegram-web-app.js` is somebody else's code, vendored
+ * for the one launch where telegram.org cannot be reached. Two things can go
+ * wrong with a vendored file and neither one shows up in a browser until the
+ * day it is needed: it can be truncated, and it can be quietly replaced.
+ *
+ * So it is pinned here. The hash below is a plain FNV-1a over the file — this
+ * repository has no `@types/node`, so a test cannot reach for `node:crypto` any
+ * more than for `node:fs`, and the file is pure ASCII, which makes Vite's
+ * `?raw` a lossless read. Refreshing the copy therefore has to be a deliberate
+ * act with a number attached to it; `AGENTS.md` carries the sha256 a human can
+ * check with `curl … | sha256sum` and the command to redo it.
+ */
+describe('the vendored copy of telegram-web-app.js', () => {
+  it('is the whole file, byte for byte, that AGENTS.md records', () => {
+    expect(vendored.length).toBe(116510);
+    expect(fnv1a(vendored)).toBe('32ec566c');
+  });
+
+  it('is not truncated: it ends where the script ends', () => {
+    expect(vendored.trimEnd().endsWith('})();')).toBe(true);
+  });
+
+  /**
+   * The three things the game actually needs out of it. A file that hashed
+   * right but had lost one of these would be a very strange file, but the
+   * assertion says out loud what the copy is for.
+   */
+  it('carries the transports and the call the game depends on', () => {
+    expect(vendored).toContain('TelegramWebviewProxy');
+    expect(vendored).toContain('WebApp.disableVerticalSwipes');
+    expect(vendored).toContain('web_app_setup_swipe_behavior');
+  });
+});
+
+/** FNV-1a, 32-bit, as eight hex digits. Small, stable and dependency-free. */
+function fnv1a(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
 
 /**
  * Which pages get the script at all. A false negative costs a real launch its
@@ -692,12 +1055,86 @@ describe('telling a Telegram launch from a plain page by its URL', () => {
     expect(dom.scripts).toEqual([]);
   });
 
-  /** Android and iOS inject this bridge before the page is even parsed. */
-  it('recognises the WebView bridge the mobile clients inject', () => {
+  /**
+   * Android **and** iOS inject this one: the iOS client puts the same
+   * `TelegramWebviewProxy` name over its WebKit message handler, so there is no
+   * separate iOS bridge to look for.
+   */
+  it('recognises the WebView bridge the native clients inject', () => {
     const dom = withDom(null, () => {
       startTg();
     }, { proxy: true });
     expect(dom.scripts).toHaveLength(1);
+  });
+
+  /**
+   * The other two transports the official script picks between when it posts an
+   * event: the Windows WebView host and a Telegram Web frame. Neither can fire
+   * without the hash already having answered — both clients put the launch
+   * parameters in the URL — so these close the question rather than open it.
+   */
+  it('recognises the Windows WebView host, window.external.notify', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    }, { external: { notify: () => {} } });
+    expect(dom.scripts).toHaveLength(1);
+  });
+
+  it('is not fooled by the window.external every browser has', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    }, { external: {} });
+    expect(dom.scripts).toEqual([]);
+  });
+
+  it('recognises a frame put up by a Telegram Web client', () => {
+    for (const framer of [
+      'https://web.telegram.org/k/',
+      'https://web.telegram.org/a/#7654321',
+      'https://telegram.org/',
+    ]) {
+      const dom = withDom(null, () => {
+        startTg();
+      }, { framedBy: framer });
+      expect(dom.scripts, framer).toHaveLength(1);
+    }
+  });
+
+  /**
+   * And the reason being framed is not enough on its own: itch.io serves the
+   * game inside an iframe (`PLAN_V1` §10, step 9). Treating that as Telegram
+   * would put a request to telegram.org on every itch.io launch — the exact
+   * third-party dependency issue #16 took out.
+   */
+  it('does not take an itch.io frame for a Telegram one', () => {
+    for (const framer of [
+      'https://itch.io/embed-upload/1234567',
+      'https://html-classic.itch.zone/html/1234567/index.html',
+      'https://nottelegram.org/',
+      'https://telegram.org.example.com/',
+    ]) {
+      const dom = withDom(null, () => {
+        startTg();
+      }, { framedBy: framer });
+      expect(dom.scripts, framer).toEqual([]);
+    }
+  });
+
+  /**
+   * Every client writes the parameters in exactly this casing and the official
+   * script reads them that way — but a link that has been through something
+   * that folds the fragment is still a Telegram launch, and the cost of being
+   * generous is one request nobody waits for.
+   */
+  it('reads the launch parameters whatever case they arrive in', () => {
+    expect(hasLaunchParams('#TGWEBAPPVERSION=8.0', '')).toBe(true);
+    expect(hasLaunchParams('#tgwebappdata=query_id%3DAAA', '')).toBe(true);
+    expect(hasLaunchParams('', '?TgWebAppStartParam=deep')).toBe(true);
+  });
+
+  it('still says no to a plain page in any case', () => {
+    expect(hasLaunchParams('#TGWEBAPP', '')).toBe(true);
+    expect(hasLaunchParams('#SHAFT', '?SEED=7')).toBe(false);
   });
 });
 
@@ -723,18 +1160,37 @@ interface FakeAppOptions {
   readonly session?: boolean;
   /** 'missing' drops disableVerticalSwipes; 'throws' makes it fail. */
   readonly swipeMethod?: 'missing' | 'throws';
+  /**
+   * Record into this log instead of a fresh one. Two copies of the script are
+   * two WebApp objects but one client on the other end, and the question the
+   * colour tests ask — «what did the client hear **last**» — can only be asked
+   * of one list.
+   */
+  readonly log?: string[];
+  /**
+   * The player's own theme colour, as the official script re-posts it at the
+   * client every time it runs (`runScript`). Measured from the real script: a
+   * late copy said set_header_color, set_background_color and
+   * set_bottom_bar_color with the player's own light theme in them.
+   */
+  readonly ownTheme?: string;
 }
 
 /**
  * A WebApp object shaped like the real one, recording what the game asks of it.
  * Only the members this module calls are here; anything else it touched would
  * be a TypeError, which is the point.
+ *
+ * `runScript()` is the official script *executing* — what happens just before
+ * the tag's load event, and what the module does not control. It is separate
+ * from `deliverScript` so a test can put the two in the browser's order.
  */
 function fakeApp(options: FakeAppOptions): {
   app: TelegramWebAppLike;
   calls: string[];
+  runScript: () => void;
 } {
-  const calls: string[] = [];
+  const calls: string[] = options.log ?? [];
   const session = options.session ?? true;
   const app: TelegramWebAppLike = {
     ready: () => {
@@ -781,7 +1237,14 @@ function fakeApp(options: FakeAppOptions): {
     colorScheme: 'light',
     themeParams: { bg_color: '#ffffff', secondary_bg_color: '#f0f0f0', text_color: '#000000' },
   });
-  return { app, calls };
+  const runScript = (): void => {
+    const own = options.ownTheme;
+    if (own === undefined) {
+      return;
+    }
+    calls.push(`setHeaderColor:${own}`, `setBackgroundColor:${own}`, `setBottomBarColor:${own}`);
+  };
+  return { app, calls, runScript };
 }
 
 interface FakeBox {
@@ -815,11 +1278,18 @@ interface FakeDom {
   readonly scripts: FakeScript[];
   /**
    * The official script arriving late: it defines window.Telegram.WebApp and
-   * then the browser fires the tag's load event, in that order.
+   * then the browser fires the tag's load event, in that order. Without an
+   * index it is the newest tag that answers.
    */
-  deliverScript(app: TelegramWebAppLike): void;
-  /** The request failing outright — a refused connection, a blocked host. */
-  failScript(): void;
+  deliverScript(app: TelegramWebAppLike, index?: number): void;
+  /** The request failing outright — a refused connection, a 404. */
+  failScript(index?: number): void;
+  /** Delays the module put on the clock, in the order it asked for them. */
+  readonly waits: number[];
+  /** How many of those are still armed. */
+  pending(): number;
+  /** Run every armed timer: the grace period for telegram.org running out. */
+  fireTimers(): void;
 }
 
 interface FakeDomOptions {
@@ -831,8 +1301,15 @@ interface FakeDomOptions {
   readonly search?: string;
   /** What the official script left in sessionStorage on an earlier load. */
   readonly stored?: string;
-  /** The WebView bridge the mobile clients inject before the page is parsed. */
+  /** The WebView bridge the native clients inject before the page is parsed. */
   readonly proxy?: boolean;
+  /** `window.external` as the Windows WebView host leaves it. */
+  readonly external?: object;
+  /**
+   * The page is inside a frame, and this is what `document.referrer` says —
+   * the URL of the page that framed it (web.telegram.org, or itch.io).
+   */
+  readonly framedBy?: string;
 }
 
 /**
@@ -865,14 +1342,21 @@ function withDom(
       return node;
     },
   };
+  const waits: number[] = [];
+  const timers = new Map<number, () => void>();
+  let nextTimer = 1;
   const win = {
     Telegram: app === null ? undefined : { WebApp: app },
     TelegramWebviewProxy: options.proxy === true ? { postEvent: () => {} } : undefined,
+    external: options.external,
     location: { hash: options.hash ?? '', search: options.search ?? '' },
     sessionStorage: {
       getItem: (key: string) =>
         key === '__telegram__initParams' ? (options.stored ?? null) : null,
     },
+    // A page that is not framed is its own parent, which is what a browser
+    // reports and what `framedByTelegram` asks first.
+    parent: undefined as unknown,
     addEventListener: (type: string, handler: () => void) => {
       listeners.push(type);
       const forType = handlers.get(type) ?? new Set<() => void>();
@@ -882,11 +1366,23 @@ function withDom(
     removeEventListener: (type: string, handler: () => void) => {
       handlers.get(type)?.delete(handler);
     },
+    setTimeout: (handler: () => void, ms: number): number => {
+      const id = nextTimer;
+      nextTimer += 1;
+      waits.push(ms);
+      timers.set(id, handler);
+      return id;
+    },
+    clearTimeout: (id: number): void => {
+      timers.delete(id);
+    },
   };
+  win.parent = options.framedBy === undefined ? win : { name: 'framer' };
   const doc = {
     documentElement: root,
     body: bodyBox,
     head,
+    referrer: options.framedBy ?? '',
     createElement: (tag: string): FakeScript => {
       if (tag !== 'script') {
         throw new Error(`the module built a <${tag}>, which it has no business doing`);
@@ -902,10 +1398,10 @@ function withDom(
       return id === 'rotate' ? rotate : null;
     },
   };
-  const latestScript = (): FakeScript => {
-    const script = scripts[scripts.length - 1];
+  const scriptAt = (index?: number): FakeScript => {
+    const script = scripts[index ?? scripts.length - 1];
     if (!script) {
-      throw new Error('no script was ever put on the page');
+      throw new Error(`no script number ${index ?? scripts.length - 1} was put on the page`);
     }
     return script;
   };
@@ -921,14 +1417,23 @@ function withDom(
       }
     },
     scripts,
-    deliverScript: (arriving: TelegramWebAppLike) => {
+    deliverScript: (arriving: TelegramWebAppLike, index?: number) => {
       // The order a browser does it in: the script runs (and defines its
       // object), then the tag's load event fires.
       win.Telegram = { WebApp: arriving };
-      latestScript().onload?.();
+      scriptAt(index).onload?.();
     },
-    failScript: () => {
-      latestScript().onerror?.();
+    failScript: (index?: number) => {
+      scriptAt(index).onerror?.();
+    },
+    waits,
+    pending: () => timers.size,
+    fireTimers: () => {
+      const armed = [...timers.values()];
+      timers.clear();
+      for (const timer of armed) {
+        timer();
+      }
     },
   };
 

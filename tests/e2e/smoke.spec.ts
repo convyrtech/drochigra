@@ -51,9 +51,17 @@ test('game boots with a non-empty canvas and a clean console', async ({ page }) 
  */
 test('boots with telegram.org unreachable, and does not even ask for it', async ({ page }) => {
   const askedTelegram: string[] = [];
+  // Issue #17 put a copy of the client script next to index.html as a fallback
+  // for a blocked telegram.org. Outside Telegram it is as pointless as the
+  // remote one — 114 KB for a «6.0» stub with an empty session — so a plain
+  // browser must not ask for either.
+  const askedCopy: string[] = [];
   page.on('request', (request) => {
-    if (request.url().includes('telegram.org')) {
-      askedTelegram.push(request.url());
+    const url = request.url();
+    if (url.includes('telegram.org')) {
+      askedTelegram.push(url);
+    } else if (url.includes('telegram-web-app.js')) {
+      askedCopy.push(url);
     }
   });
   await page.route(/telegram\.org/, () => {
@@ -72,6 +80,7 @@ test('boots with telegram.org unreachable, and does not even ask for it', async 
   // A plain launch carries no Telegram parameters, so there is nothing to load:
   // without them the script only leaves its «6.0» stub with an empty session.
   expect(askedTelegram, 'a plain browser must not touch telegram.org').toEqual([]);
+  expect(askedCopy, 'and must not load the local copy of it either').toEqual([]);
   // Generous on purpose — this is a floor against the 40-second hang, not a
   // performance budget that a slow CI box can trip over.
   expect(Date.now() - started).toBeLessThan(15_000);

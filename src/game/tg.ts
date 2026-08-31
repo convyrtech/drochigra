@@ -120,12 +120,49 @@ const TELEGRAM_HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const SCRIPT_URL = 'https://telegram.org/js/telegram-web-app.js?63';
 
 /**
+ * The same script, vendored into `content/` and therefore served from the very
+ * origin the game itself came from — the fallback for issue #17.
+ *
+ * Loading it from telegram.org is worth keeping: the client script is versioned
+ * by the client, and a copy that updates itself is one less thing to remember.
+ * But «telegram.org is unreachable» and «Telegram is unreachable» are not the
+ * same sentence, and for a Russian-speaking audience they routinely come apart:
+ * the domain gets blocked while the app itself keeps working. Then the game
+ * starts (that was issue #16) and the client hears nothing at all — no ready(),
+ * no expand(), and no `disableVerticalSwipes()`, which hands the one gesture of
+ * the game (`PLAN_V1` §3) back to Telegram, where it means «close the Mini App».
+ *
+ * So the remote copy is tried first and this one is asked for only when that
+ * fails or stays silent — see `loadTelegramScript`. Same origin as the page, so
+ * whatever reached the game reaches this too; `publicDir: 'content'` copies it
+ * next to index.html on build, and `BASE_URL` keeps the path relative, exactly
+ * as `loadBalance()` and the art do.
+ */
+const LOCAL_SCRIPT_URL = `${import.meta.env.BASE_URL}telegram-web-app.js`;
+
+/**
+ * How long telegram.org is given before the local copy is asked for as well.
+ *
+ * A blocked host is the case this exists for, and a blocked host does not
+ * refuse — it swallows the connection and never answers, so `onerror` never
+ * fires and only a clock can end the wait. The number is a compromise between
+ * two costs: too short and a player on a slow-but-working connection fetches
+ * 114 KB twice, too long and the swipe stays Telegram's for that long after the
+ * game is already on screen. Nothing waits on this timer — the game has been
+ * running since before the request was made.
+ */
+const REMOTE_GRACE_MS = 2500;
+
+/**
  * The prefix of every launch parameter Telegram puts in the URL of a Mini App:
  * `#tgWebAppData=…&tgWebAppVersion=…&tgWebAppPlatform=…&tgWebAppThemeParams=…`.
  * Android, iOS, Desktop and Web all pass them the same way, and the official
  * script reads that same hash.
  */
 const LAUNCH_PARAM_PREFIX = 'tgWebApp';
+
+/** The same prefix, folded once, for the case-insensitive look-up below. */
+const LAUNCH_PARAM_NEEDLE = LAUNCH_PARAM_PREFIX.toLowerCase();
 
 /**
  * Where the official script keeps the launch parameters once it has read them
@@ -144,9 +181,14 @@ const LAUNCH_MEMORY_KEY = '__telegram__initParams';
  *    when `index.html` loaded the script ahead of the module. Nothing about a
  *    real launch that goes this way changes.
  * 2. Otherwise the script is fetched asynchronously and the caller returns at
- *    once, so the game boots while the request is still in flight. When (and
- *    only if) the script arrives, the same wiring is applied to the object it
- *    defined — see `applyTgWiring`.
+ *    once, so the game boots while the request is still in flight — from
+ *    telegram.org first and, if that host refuses or says nothing, from the
+ *    copy the game ships with (issue #17). When (and only if) one of them
+ *    arrives, the same wiring is applied to the object it defined — see
+ *    `applyTgWiring`. If both arrive, `ready()`, `expand()` and the first-tap
+ *    listener still happen exactly once; only the chrome colours are said
+ *    again, because the second script re-posts the player's own theme on its
+ *    way in and ours has to be the last word — see `loadTelegramScript`.
  *
  * And it is only fetched for a launch that looks like Telegram's, because for
  * any other page the fetch buys nothing: with no launch parameters the script
@@ -177,10 +219,24 @@ function startTg(): void {
   };
   window.addEventListener('pointerdown', seen);
   window.addEventListener('touchend', seen);
-  loadTelegramScript(() => {
-    forget();
-    applyTgWiring({ tapped });
-  }, forget);
+  loadTelegramScript(
+    () => {
+      // Asked, not assumed: `applyTgWiring` answers whether there was a client
+      // object to wire at all. A copy that ran and left nothing behind must not
+      // count as the answer, or the good copy still in flight is ignored — and
+      // the tap must stay watched for, because that copy still needs it.
+      const wired = applyTgWiring({ tapped });
+      if (wired) {
+        forget();
+      }
+      return wired;
+    },
+    // A second copy landed on top of a wired page. It re-posts the player's own
+    // theme at the client on the way in, so our colour has to be said last
+    // again; everything else about the wiring stays once.
+    applyTgTheme,
+    forget,
+  );
 }
 
 /**
@@ -197,26 +253,163 @@ function applyTgWiring(options: { readonly tapped?: boolean } = {}): boolean {
 }
 
 /**
- * Put the official script on the page without blocking anything: `async` so the
- * parser never waits for it, appended after the game module has already run.
- * `onReady` fires when the script has executed and defined its object, `onGone`
- * when the request failed. A request that neither answers nor fails — a host
- * that is quietly dropped rather than refused, which is the case this whole
- * change is about — simply never calls either, and nothing is waiting on it.
+ * Put the official script on the page without blocking anything, and make sure
+ * one of the two copies of it actually lands (issues #16 and #17).
+ *
+ * The order is telegram.org first, our own copy second, and the second one is
+ * asked for on either of the two ways the first can fail:
+ *
+ * - **it refuses** — `onerror`, the easy case, answered at once;
+ * - **it says nothing** — the case this exists for. A blocked host does not
+ *   refuse, it swallows the connection, so there is no event to react to and
+ *   `REMOTE_GRACE_MS` on the clock is the only thing that can end the wait.
+ *
+ * Three things can happen to a copy, and each has its own callback:
+ *
+ * - `onArrived` — it executed and left a WebApp object. It **answers whether the
+ *   wiring actually went on**, and only that answer closes the question: a
+ *   response that executed but defined nothing (a 200 that was not the script)
+ *   is counted as a failure, not as a win, so the other copy still gets its
+ *   turn. Asking the callback rather than assuming is the difference between
+ *   «the wiring landed» and «something loaded».
+ * - `onAgain` — a **second** copy arrived after the wiring was already in place.
+ *   This is not noise. Running the official script re-posts the player's own
+ *   `themeParams` at the client, and three of those posts are colours: measured,
+ *   the late copy said `set_background_color #ffffff`, `set_header_color
+ *   bg_color` and `set_bottom_bar_color #ffffff`, so the **last** word on the
+ *   chrome was the player's light theme around our dark game — exactly the bug
+ *   `applyTgTheme` exists to prevent and `GOAL_V1` condition 2 rules out. So the
+ *   colours are said again. `ready()`, `expand()` and the first-tap listener are
+ *   not: those are once, whatever the order of arrivals.
+ * - `onGone` — it failed, and it fires only when **both** have. A remote request
+ *   that is still hanging is not «failed»: it may yet arrive.
+ *
+ * Both requests can be in flight at once — the timer starts the local copy
+ * without cancelling the remote one, deliberately: aborting a slow request would
+ * throw away the only copy left if the local one turned out to be missing from
+ * the deploy. Two copies arriving is therefore an ordinary case, not an exotic
+ * one: it happens on every launch where telegram.org takes longer than
+ * `REMOTE_GRACE_MS`, which is what a throttled — rather than blocked — host
+ * looks like.
  */
-function loadTelegramScript(onReady: () => void, onGone: () => void): void {
+function loadTelegramScript(
+  onArrived: () => boolean,
+  onAgain: () => void,
+  onGone: () => void,
+): void {
+  /** The wiring has been handed to a copy that arrived; the rest is noise. */
+  let applied = false;
+  let gaveUp = false;
+  let localAsked = false;
+  let remoteDead = false;
+  let localDead = false;
+  let waiting: number | undefined;
+
+  const stopWaiting = (): void => {
+    if (waiting === undefined) {
+      return;
+    }
+    const timer = waiting;
+    waiting = undefined;
+    try {
+      window.clearTimeout?.(timer);
+    } catch {
+      // A window without timers cannot have started one either.
+    }
+  };
+
+  // Only when there is nothing left in flight: a dead local copy while the
+  // remote one is still hanging is not an answer yet.
+  const bothGone = (): void => {
+    if (applied || gaveUp || !remoteDead || !localDead) {
+      return;
+    }
+    gaveUp = true;
+    stopWaiting();
+    onGone();
+  };
+
+  /**
+   * One copy of the script finished running. `gone` is how *this* copy reports
+   * a failure, because an arrival that left no object behind is a failure — it
+   * must not close the question for the other copy.
+   */
+  const arrival = (gone: () => void) => (): void => {
+    if (applied) {
+      onAgain();
+      return;
+    }
+    if (onArrived()) {
+      applied = true;
+      stopWaiting();
+      return;
+    }
+    gone();
+  };
+
+  const localGone = (): void => {
+    localDead = true;
+    bothGone();
+  };
+
+  const askLocal = (): void => {
+    if (applied || localAsked) {
+      return;
+    }
+    localAsked = true;
+    stopWaiting();
+    if (!appendScript(LOCAL_SCRIPT_URL, arrival(localGone), localGone)) {
+      localGone();
+    }
+  };
+
+  const remoteGone = (): void => {
+    remoteDead = true;
+    askLocal();
+    bothGone();
+  };
+
+  if (!appendScript(SCRIPT_URL, arrival(remoteGone), remoteGone)) {
+    // A page that will not take a script tag will not take the second one
+    // either, but the cost of finding out is one more failed createElement.
+    remoteGone();
+    return;
+  }
+  waiting = waitBriefly(askLocal, REMOTE_GRACE_MS);
+}
+
+/**
+ * One `<script async>` on the page: the parser never waits for it, and neither
+ * does the game. Returns whether the tag could be built and appended at all.
+ */
+function appendScript(src: string, onLoad: () => void, onError: () => void): boolean {
   try {
     const script = document.createElement('script');
-    script.src = SCRIPT_URL;
+    script.src = src;
     script.async = true;
-    script.onload = onReady;
-    script.onerror = onGone;
+    script.onload = onLoad;
+    script.onerror = onError;
     const parent = document.head ?? document.documentElement;
     parent.appendChild(script);
+    return true;
   } catch {
     // A page that will not take a script tag is a page without Telegram; the
     // game is already running and does not care.
-    onGone();
+    return false;
+  }
+}
+
+/**
+ * `window.setTimeout`, asked of the window rather than of the global, so a test
+ * can hand the module its own clock the way it already hands it its own
+ * `location` and `sessionStorage`. A window without timers simply never gets
+ * the fallback, which is the behaviour this module had before it existed.
+ */
+function waitBriefly(run: () => void, ms: number): number | undefined {
+  try {
+    return typeof window.setTimeout === 'function' ? window.setTimeout(run, ms) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -230,7 +423,7 @@ function loadTelegramScript(onReady: () => void, onGone: () => void): void {
  * one request nobody waits for — so this is deliberately generous.
  */
 function isTelegramLaunch(): boolean {
-  if (hasWebviewProxy() || rememberedLaunch()) {
+  if (hasClientBridge() || rememberedLaunch()) {
     return true;
   }
   try {
@@ -245,16 +438,27 @@ function isTelegramLaunch(): boolean {
  * Do these two halves of a URL carry Telegram's launch parameters? Kept apart
  * from `location` so the question can be asked of a string in a test, the way
  * `fpsRequested` is.
+ *
+ * Case-insensitively. Every client writes the parameters in exactly the casing
+ * the constant has, and the official script reads them that way too — but a
+ * link that has been through something that lowercases fragments would still be
+ * a Telegram launch, and the cost of being wrong here is one request nobody
+ * waits for against a whole Mini App left unwired.
  */
 function hasLaunchParams(hash: string, search: string): boolean {
-  return hash.includes(LAUNCH_PARAM_PREFIX) || search.includes(LAUNCH_PARAM_PREFIX);
+  return mentionsLaunch(hash) || mentionsLaunch(search);
+}
+
+/** `tgWebApp…` somewhere in this string, whatever case it arrived in. */
+function mentionsLaunch(text: string): boolean {
+  return text.toLowerCase().includes(LAUNCH_PARAM_NEEDLE);
 }
 
 /** The launch the official script wrote down before the page was reloaded. */
 function rememberedLaunch(): boolean {
   try {
     const stored = window.sessionStorage?.getItem(LAUNCH_MEMORY_KEY);
-    return typeof stored === 'string' && stored.includes(LAUNCH_PARAM_PREFIX);
+    return typeof stored === 'string' && mentionsLaunch(stored);
   } catch {
     // Storage can be denied outright (private mode, third-party frame): then
     // this signal is simply not available and the other two decide.
@@ -263,15 +467,69 @@ function rememberedLaunch(): boolean {
 }
 
 /**
- * The bridge the Android client puts on `window` before the page is parsed;
- * Telegram's own script talks to the client through it, so its presence is a
- * Mini App and nothing else. iOS uses a WebKit message handler instead, which
- * every WKWebView has and so proves nothing — an iOS launch is recognised by
- * its hash like every other.
+ * Is there a Telegram client on the other end of the page at all?
+ *
+ * These are the three transports the official script itself picks between when
+ * it posts an event (`postEvent`, telegram-web-app.js), asked in its order:
+ *
+ * 1. `window.TelegramWebviewProxy` — the object the native clients inject
+ *    before the page is parsed. **Both** mobile clients use it: iOS injects the
+ *    same name over its WebKit message handler, so there is no separate iOS
+ *    signal to look for.
+ * 2. `window.external.notify` — the Windows WebView host. `window.external`
+ *    exists in every browser; `notify` on it does not.
+ * 3. A frame whose parent is a Telegram Web client. Being framed is *not*
+ *    enough on its own — itch.io serves the game in an iframe too (`PLAN_V1`
+ *    §10, step 9), and treating that as Telegram would put a request to
+ *    telegram.org on every itch.io launch, which is exactly what issue #16
+ *    took out. So the framer has to say it is Telegram.
+ *
+ * None of the three can fire without the first one already being true in
+ * practice: web.telegram.org and the Windows client both put the launch
+ * parameters in the hash, so the URL answers first. They are here so the
+ * question «is a client listening» has the same answer as the script's own.
  */
-function hasWebviewProxy(): boolean {
-  const host = window as unknown as { TelegramWebviewProxy?: unknown };
-  return host.TelegramWebviewProxy !== undefined && host.TelegramWebviewProxy !== null;
+function hasClientBridge(): boolean {
+  const host = window as unknown as {
+    TelegramWebviewProxy?: unknown;
+    external?: unknown;
+  };
+  if (host.TelegramWebviewProxy !== undefined && host.TelegramWebviewProxy !== null) {
+    return true;
+  }
+  try {
+    const external = host.external;
+    if (typeof external === 'object' && external !== null && 'notify' in external) {
+      return true;
+    }
+  } catch {
+    // Reaching for window.external can throw in a sandboxed frame.
+  }
+  return framedByTelegram();
+}
+
+/** Hosts the Telegram Web clients are served from: `web.telegram.org` and kin. */
+const TELEGRAM_HOST = /(^|\.)telegram\.org$/i;
+
+/**
+ * A page framed by a Telegram Web client. The parent is cross-origin, so its
+ * URL cannot be read — but a framed document's `referrer` is the framing page,
+ * and that is enough to tell web.telegram.org from itch.io.
+ */
+function framedByTelegram(): boolean {
+  try {
+    if (window.parent === null || window.parent === window) {
+      return false;
+    }
+    const referrer = document.referrer;
+    if (typeof referrer !== 'string' || referrer === '') {
+      return false;
+    }
+    return TELEGRAM_HOST.test(new URL(referrer).hostname);
+  } catch {
+    // No parent to ask, or a referrer that is not a URL: not a Telegram frame.
+    return false;
+  }
 }
 
 /**

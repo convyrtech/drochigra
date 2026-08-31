@@ -8,9 +8,11 @@
       the parser never reached the game module until telegram.org answered — and
       a blocked host does not answer, it swallows the connection. Measured with
       the host dropped: after 40 seconds the document still had no <body>, no
-      page style and no canvas, i.e. a blank screen and no game (issue #16). The
-      style below is declared after this comment, so not even the dark page
-      survives it — the player gets white. The players
+      page style and no canvas — an empty frame in whatever colour the browser
+      paints an empty document, and no game (issue #16). The style below is
+      declared after this comment, so not even the dark page survives it; what
+      the player is looking at is the browser's own default, which on the
+      desktop and mobile browsers we checked is white. The players
       are Russian-speaking, and the game is opened from GitHub Pages and itch.io
       as well as from Telegram, so «telegram.org is reachable» is not something
       the game may depend on to start.
@@ -21,6 +23,12 @@
       its «6.0» stub — an empty session, every call in tg.ts version-gated above
       it — and sets --tg-viewport-stable-height to the literal `100vh`, which is
       exactly what the var() fallback below already resolves to.
+
+      Inside Telegram the script is still needed, and telegram.org can be
+      blocked while Telegram itself works — so tg.ts falls back to the copy in
+      content/telegram-web-app.js, served from this very origin, when the remote
+      one refuses or stays silent for 2.5 s (issue #17). See AGENTS.md for where
+      that copy came from and how it is refreshed.
     -->
     <meta
       name="viewport"
