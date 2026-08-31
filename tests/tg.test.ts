@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   applyTgTheme,
   disableVerticalSwipes,
+  hasLaunchParams,
   hasTelegramSession,
   initTg,
+  startTg,
   type TelegramWebAppLike,
 } from '../src/game/tg.js';
 import { fpsRequested } from '../src/ui/fpsOverlay.js';
@@ -457,6 +459,248 @@ describe('sizing to the Telegram viewport instead of the window', () => {
   });
 });
 
+/**
+ * Issue #16: the official script used to be a plain blocking `<script src>`
+ * first thing in index.html's `<head>`, so the parser never reached the game
+ * module until telegram.org answered. Measured with the host stubbed out: the
+ * page burned the full 30-second timeout and the canvas never appeared once.
+ * The players open this game from GitHub Pages and itch.io as well as from
+ * Telegram, so the game must not depend on a third-party host to start at all.
+ *
+ * It is now `startTg()` that fetches the script — asynchronously, after the
+ * game has already booted, and only for a launch that came from Telegram.
+ */
+describe('the official script never holds up the game (issue #16)', () => {
+  it('asks telegram.org for nothing at all in a plain browser', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    });
+    expect(dom.scripts).toEqual([]);
+    // …and nothing was wired either: no listeners, no boxes touched.
+    expect(dom.listeners).toEqual([]);
+    expect(dom.game.style).toEqual({});
+  });
+
+  /**
+   * Nothing is lost by not loading it there. With no launch parameters the
+   * script leaves the «6.0» stub with an empty session — every call in the
+   * module is gated at 6.1 or newer — and sets --tg-viewport-stable-height to
+   * the literal string `100vh`, which is what the var() fallback in the binding
+   * already resolves to. So the plain-browser page is unchanged down to the CSS.
+   */
+  it('leaves the box exactly where index.html puts it when no script is loaded', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    });
+    expect(dom.game.style.height).toBeUndefined();
+    expect(dom.rotate.style.height).toBeUndefined();
+  });
+
+  it('uses a WebApp object that is already on the page without asking for another', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    const dom = withDom(app, () => {
+      startTg();
+    });
+    expect(dom.scripts).toEqual([]);
+    // The whole wiring, synchronously, exactly as when index.html loaded the
+    // script ahead of the module.
+    expect(calls).toEqual([
+      'ready',
+      'expand',
+      'disableVerticalSwipes',
+      'setBackgroundColor:#05070d',
+      'setHeaderColor:#05070d',
+      'setBottomBarColor:#05070d',
+    ]);
+    expect(dom.game.style.height).toBe(
+      'calc(var(--tg-viewport-stable-height, 100vh) - var(--safe-top, 0px) - var(--safe-bottom, 0px))',
+    );
+  });
+
+  it('loads it asynchronously for a launch that carries Telegram parameters', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    }, { hash: '#tgWebAppData=query_id%3DAAA&tgWebAppVersion=8.0&tgWebAppPlatform=android' });
+    expect(dom.scripts).toHaveLength(1);
+    expect(dom.scripts[0]?.src).toBe('https://telegram.org/js/telegram-web-app.js?63');
+    // `async`: the parser must never wait for it again.
+    expect(dom.scripts[0]?.async).toBe(true);
+  });
+
+  /**
+   * The whole risk of loading it late, in one test: the wiring has to be applied
+   * when the script lands, not skipped because the game already started.
+   */
+  it('applies the whole wiring when the script arrives after the game started', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    const dom = withDom(null, (fake) => {
+      startTg();
+      // The game is up by now and nothing has been asked of Telegram yet.
+      expect(calls).toEqual([]);
+      fake.deliverScript(app);
+    }, { hash: '#tgWebAppVersion=8.0' });
+    expect(calls).toEqual([
+      'ready',
+      'expand',
+      'disableVerticalSwipes',
+      'setBackgroundColor:#05070d',
+      'setHeaderColor:#05070d',
+      'setBottomBarColor:#05070d',
+    ]);
+    // The viewport binding is part of it: the canvas parent is pinned to
+    // Telegram's visible area, and Phaser's FIT re-measures the parent box.
+    expect(dom.game.style.height).toBe(
+      'calc(var(--tg-viewport-stable-height, 100vh) - var(--safe-top, 0px) - var(--safe-bottom, 0px))',
+    );
+    expect(dom.rotate.style.height).toBe('var(--tg-viewport-stable-height, 100vh)');
+    expect(dom.root.style.colorScheme).toBe('dark');
+  });
+
+  it('still waits for the first tap when the script beat the player to it', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    withDom(null, (fake) => {
+      startTg();
+      fake.deliverScript(app);
+      calls.length = 0;
+      fake.tap();
+    }, { hash: '#tgWebAppVersion=8.0' });
+    expect(calls).toEqual(['requestFullscreen', 'lockOrientation']);
+  });
+
+  /**
+   * The other order, and the one the late load invents: the player taps while
+   * the script is still in flight. Arming a listener for a gesture that already
+   * happened would leave the Mini App windowed and free to rotate, so the
+   * takeover is done the moment the script lands instead.
+   */
+  it('takes the screen at once when the player tapped while the script loaded', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    withDom(null, (fake) => {
+      startTg();
+      fake.tap();
+      expect(calls).toEqual([]);
+      fake.deliverScript(app);
+    }, { hash: '#tgWebAppVersion=8.0' });
+    expect(calls).toEqual([
+      'ready',
+      'expand',
+      'disableVerticalSwipes',
+      'requestFullscreen',
+      'lockOrientation',
+      'setBackgroundColor:#05070d',
+      'setHeaderColor:#05070d',
+      'setBottomBarColor:#05070d',
+    ]);
+  });
+
+  it('does not take the screen early on a client too old for it', () => {
+    const { app, calls } = fakeApp({ version: '7.10' });
+    withDom(null, (fake) => {
+      startTg();
+      fake.tap();
+      fake.deliverScript(app);
+    }, { hash: '#tgWebAppVersion=7.10' });
+    expect(calls).toEqual([
+      'ready',
+      'expand',
+      'disableVerticalSwipes',
+      'setBackgroundColor:#05070d',
+      'setHeaderColor:#05070d',
+      'setBottomBarColor:#05070d',
+    ]);
+  });
+
+  it('asks only once, however many times the player taps while it loads', () => {
+    const { app, calls } = fakeApp({ version: '8.0' });
+    withDom(null, (fake) => {
+      startTg();
+      fake.tap();
+      fake.tap();
+      fake.deliverScript(app);
+      fake.tap();
+    }, { hash: '#tgWebAppVersion=8.0' });
+    expect(calls.filter((call) => call === 'requestFullscreen')).toEqual(['requestFullscreen']);
+    expect(calls.filter((call) => call === 'lockOrientation')).toEqual(['lockOrientation']);
+  });
+
+  it('stays quiet when the request fails, and the game is none the wiser', () => {
+    const dom = withDom(null, (fake) => {
+      startTg();
+      expect(() => {
+        fake.failScript();
+      }).not.toThrow();
+      // A tap after the failure must not reach a client that is not there.
+      fake.tap();
+    }, { hash: '#tgWebAppVersion=8.0' });
+    expect(dom.game.style).toEqual({});
+    expect(dom.root.style).toEqual({});
+  });
+});
+
+/**
+ * Which pages get the script at all. A false negative costs a real launch its
+ * Telegram wiring, a false positive costs one request nobody waits for, so the
+ * question is asked generously — but never of a plain browser, which is the
+ * whole point of issue #16.
+ */
+describe('telling a Telegram launch from a plain page by its URL', () => {
+  it('sees the launch parameters every client puts in the hash', () => {
+    expect(
+      hasLaunchParams('#tgWebAppData=query_id%3DAAA&tgWebAppVersion=8.0', ''),
+    ).toBe(true);
+    expect(hasLaunchParams('#tgWebAppVersion=6.0&tgWebAppPlatform=tdesktop', '')).toBe(true);
+    expect(hasLaunchParams('#tgWebAppThemeParams=%7B%7D', '')).toBe(true);
+  });
+
+  it('sees a start parameter passed in the query string', () => {
+    expect(hasLaunchParams('', '?tgWebAppStartParam=deep')).toBe(true);
+  });
+
+  it('says no to the pages the game is actually opened on', () => {
+    expect(hasLaunchParams('', '')).toBe(false);
+    expect(hasLaunchParams('#', '?fps=1')).toBe(false);
+    expect(hasLaunchParams('#shaft', '?seed=7')).toBe(false);
+  });
+
+  it('loads the script for a hash launch and for a query launch', () => {
+    for (const where of [{ hash: '#tgWebAppVersion=8.0' }, { search: '?tgWebAppStartParam=x' }]) {
+      const dom = withDom(null, () => {
+        startTg();
+      }, where);
+      expect(dom.scripts, JSON.stringify(where)).toHaveLength(1);
+    }
+  });
+
+  /**
+   * A Mini App that reloaded loses nothing — the hash survives a reload — but a
+   * page that navigated away from it would, so the copy the official script
+   * leaves in sessionStorage is read as well. In a plain browser that entry is
+   * either absent or the `{}` the script writes for a launch with no parameters,
+   * and neither mentions tgWebApp.
+   */
+  it('remembers a launch the official script wrote down before a reload', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    }, { stored: '{"tgWebAppVersion":"8.0","tgWebAppPlatform":"android"}' });
+    expect(dom.scripts).toHaveLength(1);
+  });
+
+  it('is not fooled by the empty note the script leaves in a plain browser', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    }, { stored: '{}' });
+    expect(dom.scripts).toEqual([]);
+  });
+
+  /** Android and iOS inject this bridge before the page is even parsed. */
+  it('recognises the WebView bridge the mobile clients inject', () => {
+    const dom = withDom(null, () => {
+      startTg();
+    }, { proxy: true });
+    expect(dom.scripts).toHaveLength(1);
+  });
+});
+
 /** Telegram's own version comparison: the parts are numbers, not characters. */
 function atLeastVersion(have: string, want: string): boolean {
   const mine = have.split('.');
@@ -544,6 +788,14 @@ interface FakeBox {
   readonly style: Record<string, string>;
 }
 
+/** A `<script>` element as the loader builds it, and as the head receives it. */
+interface FakeScript {
+  src: string;
+  async: boolean;
+  onload: (() => void) | null;
+  onerror: (() => void) | null;
+}
+
 interface FakeDom {
   readonly root: FakeBox;
   /**
@@ -559,6 +811,28 @@ interface FakeDom {
   readonly listeners: string[];
   /** Fire the armed pointerdown, the way a player's first tap does. */
   tap(): void;
+  /** Every script tag the module put on the page, in order (issue #16). */
+  readonly scripts: FakeScript[];
+  /**
+   * The official script arriving late: it defines window.Telegram.WebApp and
+   * then the browser fires the tag's load event, in that order.
+   */
+  deliverScript(app: TelegramWebAppLike): void;
+  /** The request failing outright — a refused connection, a blocked host. */
+  failScript(): void;
+}
+
+interface FakeDomOptions {
+  /** What index.html's theme-color meta says. */
+  readonly themeColor?: string;
+  /** `location.hash` of the page, where Telegram puts the launch parameters. */
+  readonly hash?: string;
+  /** `location.search` of the page. */
+  readonly search?: string;
+  /** What the official script left in sessionStorage on an earlier load. */
+  readonly stored?: string;
+  /** The WebView bridge the mobile clients inject before the page is parsed. */
+  readonly proxy?: boolean;
 }
 
 /**
@@ -575,7 +849,7 @@ interface FakeDom {
 function withDom(
   app: TelegramWebAppLike | null,
   run: (dom: FakeDom) => void,
-  options: { themeColor?: string } = {},
+  options: FakeDomOptions = {},
 ): FakeDom {
   const root: FakeBox = { style: {} };
   const bodyBox: FakeBox = { style: {} };
@@ -584,8 +858,21 @@ function withDom(
   const listeners: string[] = [];
   const handlers = new Map<string, Set<() => void>>();
   const meta = { content: options.themeColor ?? '#05070d' };
+  const scripts: FakeScript[] = [];
+  const head = {
+    appendChild: (node: FakeScript): FakeScript => {
+      scripts.push(node);
+      return node;
+    },
+  };
   const win = {
     Telegram: app === null ? undefined : { WebApp: app },
+    TelegramWebviewProxy: options.proxy === true ? { postEvent: () => {} } : undefined,
+    location: { hash: options.hash ?? '', search: options.search ?? '' },
+    sessionStorage: {
+      getItem: (key: string) =>
+        key === '__telegram__initParams' ? (options.stored ?? null) : null,
+    },
     addEventListener: (type: string, handler: () => void) => {
       listeners.push(type);
       const forType = handlers.get(type) ?? new Set<() => void>();
@@ -599,6 +886,13 @@ function withDom(
   const doc = {
     documentElement: root,
     body: bodyBox,
+    head,
+    createElement: (tag: string): FakeScript => {
+      if (tag !== 'script') {
+        throw new Error(`the module built a <${tag}>, which it has no business doing`);
+      }
+      return { src: '', async: false, onload: null, onerror: null };
+    },
     querySelector: (selector: string) =>
       selector === 'meta[name="theme-color"]' ? meta : null,
     getElementById: (id: string) => {
@@ -607,6 +901,13 @@ function withDom(
       }
       return id === 'rotate' ? rotate : null;
     },
+  };
+  const latestScript = (): FakeScript => {
+    const script = scripts[scripts.length - 1];
+    if (!script) {
+      throw new Error('no script was ever put on the page');
+    }
+    return script;
   };
   const dom: FakeDom = {
     root,
@@ -618,6 +919,16 @@ function withDom(
       for (const handler of [...(handlers.get('pointerdown') ?? [])]) {
         handler();
       }
+    },
+    scripts,
+    deliverScript: (arriving: TelegramWebAppLike) => {
+      // The order a browser does it in: the script runs (and defines its
+      // object), then the tag's load event fires.
+      win.Telegram = { WebApp: arriving };
+      latestScript().onload?.();
+    },
+    failScript: () => {
+      latestScript().onerror?.();
     },
   };
 

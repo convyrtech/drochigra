@@ -106,14 +106,183 @@ const PAGE_BACKGROUND = '#05070d';
 const TELEGRAM_HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 /**
+ * The official client script. It has to come from Telegram's own origin so a
+ * client update reaches every Mini App without a rebuild, which is why
+ * `index.html` used to carry it as a plain `<script src>` first thing in
+ * `<head>` — and that is exactly what stopped the parser dead on a browser that
+ * cannot reach telegram.org. A blocked host does not refuse the connection, it
+ * swallows it: measured with the host dropped, the page still had no <body>, no
+ * page style and no canvas after 40 seconds — a blank white screen and a player
+ * who leaves (issue #16). The tag is gone from the page; the script is asked for
+ * from here instead, after the game has already started, and only for a launch
+ * that actually came from Telegram (`isTelegramLaunch`).
+ */
+const SCRIPT_URL = 'https://telegram.org/js/telegram-web-app.js?63';
+
+/**
+ * The prefix of every launch parameter Telegram puts in the URL of a Mini App:
+ * `#tgWebAppData=…&tgWebAppVersion=…&tgWebAppPlatform=…&tgWebAppThemeParams=…`.
+ * Android, iOS, Desktop and Web all pass them the same way, and the official
+ * script reads that same hash.
+ */
+const LAUNCH_PARAM_PREFIX = 'tgWebApp';
+
+/**
+ * Where the official script keeps the launch parameters once it has read them
+ * (`sessionStorageSet('initParams', …)`), so a Mini App whose page reloaded
+ * without the hash is still recognised as one.
+ */
+const LAUNCH_MEMORY_KEY = '__telegram__initParams';
+
+/**
+ * Start Telegram without ever making the player wait for Telegram (issue #16).
+ *
+ * Two things happen here, and the order is the whole point:
+ *
+ * 1. If the WebApp object is already on the page — a client that injected it, a
+ *    test harness — the wiring is applied **synchronously**, exactly as it was
+ *    when `index.html` loaded the script ahead of the module. Nothing about a
+ *    real launch that goes this way changes.
+ * 2. Otherwise the script is fetched asynchronously and the caller returns at
+ *    once, so the game boots while the request is still in flight. When (and
+ *    only if) the script arrives, the same wiring is applied to the object it
+ *    defined — see `applyTgWiring`.
+ *
+ * And it is only fetched for a launch that looks like Telegram's, because for
+ * any other page the fetch buys nothing: with no launch parameters the script
+ * leaves the «6.0» stub with an empty session, every call in this module is
+ * gated at 6.1 or newer, and the one thing it does set — the viewport variable
+ * — it sets to the literal string `100vh`, which is what our own `var(…, 100vh)`
+ * fallback already resolves to. So the plain-browser build is unchanged down to
+ * the CSS, minus one request to a third-party host that can hang.
+ */
+function startTg(): void {
+  if (applyTgWiring()) {
+    return;
+  }
+  if (!isTelegramLaunch()) {
+    return;
+  }
+  // The fullscreen takeover waits for the player's first tap, and a script that
+  // arrives after that tap would arm a listener for a gesture that has already
+  // happened. So the tap is watched for while we wait, and handed to the wiring.
+  let tapped = false;
+  const seen = (): void => {
+    tapped = true;
+    forget();
+  };
+  const forget = (): void => {
+    window.removeEventListener('pointerdown', seen);
+    window.removeEventListener('touchend', seen);
+  };
+  window.addEventListener('pointerdown', seen);
+  window.addEventListener('touchend', seen);
+  loadTelegramScript(() => {
+    forget();
+    applyTgWiring({ tapped });
+  }, forget);
+}
+
+/**
+ * Apply everything this module does to the client, if there is a client object
+ * to apply it to. Returns whether there was one.
+ */
+function applyTgWiring(options: { readonly tapped?: boolean } = {}): boolean {
+  if (tg() === null) {
+    return false;
+  }
+  initTg(options);
+  applyTgTheme();
+  return true;
+}
+
+/**
+ * Put the official script on the page without blocking anything: `async` so the
+ * parser never waits for it, appended after the game module has already run.
+ * `onReady` fires when the script has executed and defined its object, `onGone`
+ * when the request failed. A request that neither answers nor fails — a host
+ * that is quietly dropped rather than refused, which is the case this whole
+ * change is about — simply never calls either, and nothing is waiting on it.
+ */
+function loadTelegramScript(onReady: () => void, onGone: () => void): void {
+  try {
+    const script = document.createElement('script');
+    script.src = SCRIPT_URL;
+    script.async = true;
+    script.onload = onReady;
+    script.onerror = onGone;
+    const parent = document.head ?? document.documentElement;
+    parent.appendChild(script);
+  } catch {
+    // A page that will not take a script tag is a page without Telegram; the
+    // game is already running and does not care.
+    onGone();
+  }
+}
+
+/**
+ * Does this page look like a Mini App launch? Three signals, any one is enough:
+ * the launch parameters in the URL, the copy the official script leaves in
+ * sessionStorage after a reload, and the WebView object the mobile clients
+ * inject before the page is even parsed.
+ *
+ * A false negative costs a launch its Telegram wiring, a false positive costs
+ * one request nobody waits for — so this is deliberately generous.
+ */
+function isTelegramLaunch(): boolean {
+  if (hasWebviewProxy() || rememberedLaunch()) {
+    return true;
+  }
+  try {
+    const url = window.location;
+    return hasLaunchParams(String(url?.hash ?? ''), String(url?.search ?? ''));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Do these two halves of a URL carry Telegram's launch parameters? Kept apart
+ * from `location` so the question can be asked of a string in a test, the way
+ * `fpsRequested` is.
+ */
+function hasLaunchParams(hash: string, search: string): boolean {
+  return hash.includes(LAUNCH_PARAM_PREFIX) || search.includes(LAUNCH_PARAM_PREFIX);
+}
+
+/** The launch the official script wrote down before the page was reloaded. */
+function rememberedLaunch(): boolean {
+  try {
+    const stored = window.sessionStorage?.getItem(LAUNCH_MEMORY_KEY);
+    return typeof stored === 'string' && stored.includes(LAUNCH_PARAM_PREFIX);
+  } catch {
+    // Storage can be denied outright (private mode, third-party frame): then
+    // this signal is simply not available and the other two decide.
+    return false;
+  }
+}
+
+/**
+ * The bridge the Android client puts on `window` before the page is parsed;
+ * Telegram's own script talks to the client through it, so its presence is a
+ * Mini App and nothing else. iOS uses a WebKit message handler instead, which
+ * every WKWebView has and so proves nothing — an iOS launch is recognised by
+ * its hash like every other.
+ */
+function hasWebviewProxy(): boolean {
+  const host = window as unknown as { TelegramWebviewProxy?: unknown };
+  return host.TelegramWebviewProxy !== undefined && host.TelegramWebviewProxy !== null;
+}
+
+/**
  * The Telegram WebView API object, or null when the script did not define one.
  *
- * Careful: this says the **script** is there, not that Telegram is. `index.html`
- * loads the official telegram-web-app.js unconditionally, and it defines
- * window.Telegram.WebApp in any browser — version «6.0», a working ready() and
- * an empty session. Use it only for calls that are harmless outside Telegram
- * (ready/expand, which post a message nobody is listening to); for decisions,
- * ask `isTelegram()`.
+ * Careful: this says the **script** is there, not that Telegram is. The script
+ * defines window.Telegram.WebApp in any browser it is loaded into — version
+ * «6.0», a working ready() and an empty session — and a harness or a client can
+ * put the object there itself. Use it only for calls that are harmless outside
+ * Telegram (ready/expand, which post a message nobody is listening to); for
+ * decisions, ask `isTelegram()`.
  */
 function tg(): TelegramWebAppLike | null {
   const app = window.Telegram?.WebApp;
@@ -208,8 +377,12 @@ function disableVerticalSwipes(app: TelegramWebAppLike): boolean {
  * takes the vertical swipe away from the client (Bot API 7.7+) and registers the
  * first-gesture fullscreen/orientation takeover (Bot API 8.0+).
  * Safe to call at any time; outside Telegram every step is a no-op.
+ *
+ * `tapped` says the player has already made that first gesture — which happens
+ * when the official script arrived after the game had started (issue #16), and
+ * means the takeover has to be done now rather than waited for.
  */
-function initTg(): void {
+function initTg(options: { readonly tapped?: boolean } = {}): void {
   const app = tg();
   if (!app) {
     return;
@@ -221,7 +394,7 @@ function initTg(): void {
     // collapsed sheet Telegram can open it in.
     app.expand?.();
     disableVerticalSwipes(app);
-    setupFullscreenOnGesture(app);
+    setupFullscreenOnGesture(app, options.tapped === true);
   } catch {
     // The WebView API should never throw here, but never let it block startup.
   }
@@ -346,8 +519,14 @@ function bindTelegramViewport(): void {
  * This runs only when Telegram is present. main.ts's own setupOrientation()
  * skips its screen.orientation.lock when isTelegram() is true, so the two never
  * fight over the screen orientation.
+ *
+ * `alreadyTapped` is the late-script case of issue #16: the script can arrive
+ * after the player has tapped, and then there is no first gesture left to wait
+ * for. Both calls are postMessages to the client and need no gesture of their
+ * own — the tap is what the takeover is polite about, not what it requires —
+ * so the takeover is simply done on the spot.
  */
-function setupFullscreenOnGesture(app: TelegramWebAppLike): void {
+function setupFullscreenOnGesture(app: TelegramWebAppLike, alreadyTapped = false): void {
   // Both calls need Bot API 8.0+. On older clients the official script prints a
   // console error if they are attempted, so gate them on the version support.
   const supported = supports(app, SINCE.fullscreen);
@@ -376,9 +555,24 @@ function setupFullscreenOnGesture(app: TelegramWebAppLike): void {
     window.removeEventListener('touchend', onGesture);
   };
 
+  if (alreadyTapped) {
+    onGesture();
+    return;
+  }
+
   window.addEventListener('pointerdown', onGesture);
   window.addEventListener('touchend', onGesture);
 }
 
-export { tg, hasTelegramSession, isTelegram, initTg, applyTgTheme, disableVerticalSwipes };
+export {
+  tg,
+  hasTelegramSession,
+  isTelegram,
+  startTg,
+  initTg,
+  applyTgTheme,
+  disableVerticalSwipes,
+  hasLaunchParams,
+  isTelegramLaunch,
+};
 export type { TelegramWebAppLike };

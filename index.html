@@ -3,13 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <!--
-      Telegram Mini App: the official client script. It must run before the
-      game module so window.Telegram.WebApp is ready when src/main.ts starts.
-      First in <head> as required. If it cannot load (no network / blocker),
-      window.Telegram stays undefined and src/game/tg.ts degrades to a no-op,
-      so the game still runs exactly as before in a plain browser.
+      Telegram Mini App: the official client script is deliberately NOT loaded
+      here. It used to sit first in <head> as a plain <script src>, which meant
+      the parser never reached the game module until telegram.org answered — and
+      a blocked host does not answer, it swallows the connection. Measured with
+      the host dropped: after 40 seconds the document still had no <body>, no
+      page style and no canvas, i.e. a blank screen and no game (issue #16). The
+      style below is declared after this comment, so not even the dark page
+      survives it — the player gets white. The players
+      are Russian-speaking, and the game is opened from GitHub Pages and itch.io
+      as well as from Telegram, so «telegram.org is reachable» is not something
+      the game may depend on to start.
+
+      src/game/tg.ts loads it instead: asynchronously, after the game has already
+      started, and only when the URL carries Telegram's own launch parameters.
+      Nothing is lost by that. Without those parameters the script only leaves
+      its «6.0» stub — an empty session, every call in tg.ts version-gated above
+      it — and sets --tg-viewport-stable-height to the literal `100vh`, which is
+      exactly what the var() fallback below already resolves to.
     -->
-    <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"

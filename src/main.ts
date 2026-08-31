@@ -1,7 +1,7 @@
 import { loadArtIndex } from './game/artTextures.js';
 import { createGame } from './game/createGame.js';
 import { loadBalance } from './game/loadBalance.js';
-import { initTg, applyTgTheme, isTelegram } from './game/tg.js';
+import { startTg, isTelegram, isTelegramLaunch } from './game/tg.js';
 import { fpsRequested, showFpsOverlay } from './ui/fpsOverlay.js';
 
 const PARENT_ID = 'game';
@@ -10,10 +10,12 @@ const MOBILE_EDGE_PX = 600;
 
 async function start(): Promise<void> {
   // Telegram Mini App: ready() hides the placeholder and full-screens on the
-  // first tap. Both are no-ops when not inside Telegram, so a plain browser,
-  // local dev server and GitHub Pages keep working unchanged.
-  initTg();
-  applyTgTheme();
+  // first tap. Outside Telegram this does nothing at all — it does not even ask
+  // telegram.org for the client script, which is what used to hold the whole
+  // page hostage to a third-party host (issue #16). Inside Telegram the script
+  // is fetched asynchronously and the wiring is applied the moment it lands, so
+  // nothing below waits for it either: see src/game/tg.ts.
+  startTg();
   // The balance must load or there is no game; the art index is allowed to be
   // missing, and then the game draws itself out of rectangles as it always did.
   const [balance, art] = await Promise.all([loadBalance(), loadArtIndex()]);
@@ -37,7 +39,14 @@ function setupOrientation(): void {
     // Inside Telegram the WebView takes over orientation/fullscreen on the
     // first tap (src/game/tg.ts), so locking the native orientation here as
     // well would fight it. Outside Telegram this stays the only lock, as before.
-    if (isTelegram()) {
+    //
+    // Asked of the launch, not of the object: the client script is fetched
+    // after the game starts now, and a tap that lands before it arrives would
+    // otherwise see no `window.Telegram` yet and fire the native lock inside a
+    // real Mini App — exactly what the paragraph above forbids. The launch
+    // parameters are in the URL from the first byte, so they answer correctly
+    // whether the script has turned up or not.
+    if (isTelegramLaunch() || isTelegram()) {
       return;
     }
     const orientation =

@@ -43,7 +43,10 @@ async function canvasFrame(page: Page) {
 }
 
 test('a swipe that starts on «ЗАЛП» does not spend the salvo, a press does', async ({ page }) => {
-  await page.goto('./', { waitUntil: 'load' });
+  // `domcontentloaded`, not `load`: nothing here needs every subresource, and
+  // waiting for them let an unreachable third-party host read as a code
+  // regression (issue #16). `canvasFrame` waits for what actually matters.
+  await page.goto('./', { waitUntil: 'domcontentloaded' });
   const frame = await canvasFrame(page);
   await page.waitForTimeout(1500);
 
@@ -83,7 +86,10 @@ test('a swipe that starts on «ЗАЛП» does not spend the salvo, a press does
 });
 
 test('a swipe that starts on «НАЧАТЬ СМЕНУ» does not start the shift', async ({ page }) => {
-  await page.goto('./', { waitUntil: 'load' });
+  // `domcontentloaded`, not `load`: nothing here needs every subresource, and
+  // waiting for them let an unreachable third-party host read as a code
+  // regression (issue #16). `canvasFrame` waits for what actually matters.
+  await page.goto('./', { waitUntil: 'domcontentloaded' });
   const frame = await canvasFrame(page);
   await page.waitForTimeout(1500);
 
